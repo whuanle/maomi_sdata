@@ -1,0 +1,38 @@
+[
+  {
+    "name": "metric",
+    "sql": "SELECT avg(\"value\") AS value\nFROM {{metrics}}\nWHERE ts >= $start AND ts < $end AND (((name = $cf0)))",
+    "parameters": {
+      "cf0": "cpu'usage"
+    }
+  },
+  {
+    "name": "delta",
+    "sql": "SELECT sum(\"value\") AS value\nFROM (SELECT * EXCLUDE (value, previous_value), CASE WHEN previous_value IS NULL THEN NULL ELSE value - previous_value END AS value FROM (SELECT *, lag(value) OVER (PARTITION BY name, labels ORDER BY ts) AS previous_value FROM {{metrics}} WHERE ts >= $start AND ts < $end AND (((name = $cf0)))))\nWHERE ts >= $start AND ts < $end",
+    "parameters": {
+      "cf0": "cpu'usage"
+    }
+  },
+  {
+    "name": "custom",
+    "sql": "SELECT ((sum(TRY_CAST(\"value\" AS DOUBLE))) / NULLIF((count(*)), 0)) AS value\nFROM {{metrics}}\nWHERE ts >= $start AND ts < $end AND (((name = $cf0)))",
+    "parameters": {
+      "cf0": "cpu'usage"
+    }
+  },
+  {
+    "name": "trace",
+    "sql": "SELECT quantile_cont((TRY_CAST(\"duration_us\" AS DOUBLE) / NULLIF(CAST($cf0 AS DOUBLE), 0)), $cf1) AS value\nFROM {{traces}}\nWHERE ts >= $start AND ts < $end",
+    "parameters": {
+      "cf0": 1000,
+      "cf1": 0.99
+    }
+  },
+  {
+    "name": "session",
+    "sql": "SELECT count(*) AS value\nFROM (SELECT project_key, session_id, min(ts) AS ts, arg_max(user_agent, ts) AS user_agent, arg_max(domain, ts) AS domain FROM {{sessions}} WHERE ts >= $start AND ts < $end GROUP BY project_key, session_id)\nWHERE ts >= $start AND ts < $end AND ((domain = $cf0))",
+    "parameters": {
+      "cf0": "new.example"
+    }
+  }
+]

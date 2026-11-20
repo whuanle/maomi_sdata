@@ -1,0 +1,19 @@
+{
+  "name": "@sdata/rum-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.0",
+    "vitest": "^4.0.0"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^8.0.29"
+  }
+}

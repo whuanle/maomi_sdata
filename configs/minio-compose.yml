@@ -1,0 +1,38 @@
+# MinIO 单机示例（T513）：SData 冷存储 S3 兼容端点
+# 用法：docker compose -f configs/minio-compose.yml up -d
+# 对应 configs/system.yaml 的 SData:S3 配置：
+#   S3:
+#     Endpoint: http://localhost:9000
+#     Bucket: sdata-cold
+#     Prefix: sdata/archive
+#     AccessKey: sdata
+#     SecretKey: sdata12345
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: sdata
+      MINIO_ROOT_PASSWORD: sdata12345
+    volumes:
+      - minio-data:/data
+
+  # 一次性建桶（可选）：docker compose -f configs/minio-compose.yml run --rm mc
+  mc:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 sdata sdata12345 &&
+      mc mb --ignore-existing local/sdata-cold;
+      exit 0"
+    profiles:
+      - tools
+
+volumes:
+  minio-data:

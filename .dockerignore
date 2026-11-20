@@ -1,0 +1,31 @@
+**/bin/
+**/obj/
+.artifacts/
+**/.git/
+# 运行时私有配置和密钥不得进入构建上下文
+**/rsa_private.key
+**/appsettings.Development.json
+/configs/system.json
+/configs/system.runtime.json
+/configs/system.yaml
+/configs/plugins/
+.env
+.env.*
+# 前端在构建阶段重新生成，避免带入本机产物
+src/SData/wwwroot/
+node_modules/
+ui/node_modules/
+ui/dist/
+data/
+logs/
+.tmp/
+asserts/
+.probe/
+.vdprobe/
+.mimosa/
+local-dev/
+outputs/
+tmp/
+*.log
+README.md
+docs/

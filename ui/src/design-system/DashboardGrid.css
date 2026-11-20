@@ -1,0 +1,23 @@
+.dashboard-grid > .react-grid-layout {
+  transition: none;
+}
+
+.dashboard-grid .react-grid-item.cssTransforms {
+  transition: transform 100ms ease-out;
+}
+
+.dashboard-grid .react-grid-item.react-draggable-dragging,
+.dashboard-grid .react-grid-item.resizing,
+.dashboard-grid .react-grid-item.react-grid-placeholder {
+  transition: none;
+}
+
+.dashboard-grid .react-grid-item.react-draggable-dragging {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-grid .react-grid-item.cssTransforms {
+    transition: none;
+  }
+}

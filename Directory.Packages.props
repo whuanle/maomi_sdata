@@ -1,0 +1,69 @@
+<Project>
+	<PropertyGroup>
+		<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+		<CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Module framework (Maomi) -->
+		<PackageVersion Include="Maomi.Core" Version="2.3.0" />
+
+		<!-- CQRS / validation -->
+		<PackageVersion Include="MediatR" Version="12.5.0" />
+		<PackageVersion Include="FluentValidation" Version="12.2.0" />
+
+		<!-- Data access -->
+		<PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.15" />
+		<PackageVersion Include="DuckDB.NET.Data.Full" Version="1.5.6.1" />
+
+		<!-- ASP.NET Core / auth -->
+		<PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
+		<PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
+		<PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.4.2" />
+
+		<!-- Logging / observability -->
+		<PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
+		<PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
+		<PackageVersion Include="Serilog.Formatting.Compact" Version="3.0.0" />
+		<PackageVersion Include="OpenTelemetry" Version="1.21.0" />
+		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.21.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.21.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.21.0" />
+		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.21.0" />
+
+		<!-- Configuration / ids（类库一律用 Abstractions，避免引入完整 Host） -->
+		<PackageVersion Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
+		<PackageVersion Include="Yitter.IdGenerator" Version="1.0.15" />
+		<PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.15" />
+		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
+
+		<!-- Analyzers -->
+		<PackageVersion Include="StyleCop.Analyzers" Version="1.2.0-beta.556" />
+
+		<!-- Tests -->
+		<PackageVersion Include="xunit" Version="2.9.2" />
+		<PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+		<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+
+		<!-- 计划包版本封板（T000，仅声明不引用；后续仅 T710 可再改本文件） -->
+		<PackageVersion Include="Grpc.AspNetCore" Version="2.85.0" />
+		<PackageVersion Include="Google.Protobuf" Version="3.36.2" />
+		<PackageVersion Include="Grpc.Tools" Version="2.85.0" />
+		<PackageVersion Include="MQTTnet" Version="5.2.0.1603" />
+		<PackageVersion Include="AWSSDK.S3" Version="4.1.0" />
+
+		<!-- MQ 日志消费（可选输入通道，消费者默认关闭；仅 SData.Ingest.Core 引用） -->
+		<PackageVersion Include="Confluent.Kafka" Version="2.16.0" />
+		<PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
+		<PackageVersion Include="DotPulsar" Version="5.3.4" />
+	</ItemGroup>
+</Project>

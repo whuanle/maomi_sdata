@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn>
+		<IsTestProject>true</IsTestProject>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="$(RepoRoot)\src\dashboard\SData.Dashboard.Core\SData.Dashboard.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\metrics\SData.Metrics.Core\SData.Metrics.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\store\SData.Store.Core\SData.Store.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+	</ItemGroup>
+
+</Project>

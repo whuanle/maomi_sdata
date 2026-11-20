@@ -1,0 +1,253 @@
+@import 'tailwindcss';
+
+/* ============================================================
+   SData design-system v2 主题令牌（CSS 变量）
+   设计基准：HyperDX 式暗色高密度观测台，默认暗色，可切亮色。
+   素净原则（对齐 HyperDX ClickStack）：纯中性灰底面（不带蓝调）、
+   低饱和紫仅作主按钮/选中态强调、无渐变无光晕、小圆角、细边框。
+   变量挂在 :root[data-theme]，由 AppProviders 主题桥写入；
+   组件层一律经 Tailwind 语义色（@theme inline 映射）或 var() 引用，
+   禁止在组件里写 #hex（echarts 系列色与 theme/tokens.ts 品牌常量除外）。
+   ============================================================ */
+
+/* ---- 暗色（默认） ---- */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --c-bg: #1c1c1e;
+  --c-surface: #262628;
+  --c-surface-2: #2e2e30;
+  --c-surface-3: #38383a;
+  --c-border: #333336;
+  --c-border-strong: #464649;
+
+  --c-fg: #f2f2f2;
+  --c-fg-muted: #b3b6bd;
+  --c-fg-subtle: #85868a;
+  --c-fg-faint: #626266;
+
+  /* 低饱和品牌紫（暗色提亮档），仅主按钮/链接/选中态 */
+  --c-primary: #7a6fe0;
+  --c-primary-hover: #8f86e8;
+  --c-primary-active: #6b61cf;
+  --c-primary-soft: rgba(122, 111, 224, 0.14);
+
+  --c-success: #22c55e;
+  --c-success-soft: rgba(34, 197, 94, 0.15);
+  --c-warning: #f59e0b;
+  --c-warning-soft: rgba(245, 158, 11, 0.15);
+  --c-error: #ef4444;
+  --c-error-soft: rgba(239, 68, 68, 0.15);
+  --c-info: #437eef;
+  --c-info-soft: rgba(67, 126, 239, 0.15);
+
+  /* 图表探索页强调色（HyperDX 风格绿） */
+  --c-accent: #2fb380;
+  --c-accent-soft: rgba(47, 179, 128, 0.15);
+
+  --c-overlay: rgba(0, 0, 0, 0.6);
+  --c-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --c-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ---- 亮色 ---- */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --c-bg: #f6f6f7;
+  --c-surface: #ffffff;
+  --c-surface-2: #f4f4f5;
+  --c-surface-3: #ebebed;
+  --c-border: #e4e4e6;
+  --c-border-strong: #cfcfd2;
+
+  --c-fg: #1b1b1e;
+  --c-fg-muted: #57575e;
+  --c-fg-subtle: #8b8b92;
+  --c-fg-faint: #bcbcc2;
+
+  --c-primary: #6459ce;
+  --c-primary-hover: #5448c1;
+  --c-primary-active: #483db0;
+  --c-primary-soft: rgba(100, 89, 206, 0.08);
+
+  --c-success: #22c55e;
+  --c-success-soft: rgba(34, 197, 94, 0.1);
+  --c-warning: #f59e0b;
+  --c-warning-soft: rgba(245, 158, 11, 0.1);
+  --c-error: #ef4444;
+  --c-error-soft: rgba(239, 68, 68, 0.1);
+  --c-info: #437eef;
+  --c-info-soft: rgba(67, 126, 239, 0.1);
+
+  --c-accent: #0e8a5f;
+  --c-accent-soft: rgba(14, 138, 95, 0.1);
+
+  --c-overlay: rgba(16, 16, 18, 0.45);
+  --c-shadow: 0 4px 16px rgba(16, 16, 18, 0.08);
+  --c-shadow-sm: 0 1px 2px rgba(16, 16, 18, 0.06);
+}
+
+/* ---- Tailwind 语义色映射：@theme inline 让工具类直接引用上面的运行时变量 ---- */
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-border: var(--c-border);
+  --color-border-strong: var(--c-border-strong);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-fg-muted);
+  --color-subtle: var(--c-fg-subtle);
+  --color-faint: var(--c-fg-faint);
+  --color-primary: var(--c-primary);
+  --color-primary-hover: var(--c-primary-hover);
+  --color-primary-active: var(--c-primary-active);
+  --color-primary-soft: var(--c-primary-soft);
+  --color-success: var(--c-success);
+  --color-success-soft: var(--c-success-soft);
+  --color-warning: var(--c-warning);
+  --color-warning-soft: var(--c-warning-soft);
+  --color-error: var(--c-error);
+  --color-error-soft: var(--c-error-soft);
+  --color-info: var(--c-info);
+  --color-info-soft: var(--c-info-soft);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+
+  /* 字体对齐 HyperDX：只声明 Inter，未安装时直接落到 Helvetica/Arial 等新怪诞体
+     （不引中转的 -apple-system/Segoe UI，避免圆润人文风回退） */
+  --font-sans: Inter, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, Menlo, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+}
+
+@layer base {
+  * {
+    border-color: var(--c-border);
+  }
+
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    height: 100%;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--c-bg);
+    color: var(--c-fg);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  /* 原生控件（checkbox/radio/日期输入）跟随品牌主色 */
+  .accent-primary,
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: var(--c-primary);
+  }
+}
+
+/* ---- 组件层默认值（可被任意 Tailwind 工具类覆盖，如 w-[220px]/flex-1） ---- */
+@layer components {
+  /* 控件默认撑满容器（Input/Select 等块级表单场景）；行内布局由调用方工具类接管 */
+  .sdata-control {
+    width: 100%;
+  }
+}
+
+/* ---- 滚动条（随主题） ---- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 6px;
+  background-color: var(--c-border-strong);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--c-fg-faint);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- Toast 进出场动画（design-system/components/Toast.tsx） ---- */
+@keyframes sdata-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.sdata-toast {
+  animation: sdata-toast-in 0.18s ease-out;
+}
+
+/* ---- 弹层进出场（Radix Portal 内容通用） ---- */
+@keyframes sdata-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sdata-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sdata-drawer-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.sdata-overlay {
+  animation: sdata-overlay-in 0.15s ease-out;
+}
+
+.sdata-pop {
+  animation: sdata-pop-in 0.15s ease-out;
+}
+
+.sdata-drawer-right {
+  animation: sdata-drawer-in-right 0.2s ease-out;
+}
+
+/* Dashboard 布局引擎的视觉覆盖，几何定位仍由适配层管理。 */
+.react-grid-item.react-grid-placeholder { background: var(--c-primary-soft); border: 1px dashed var(--c-primary); opacity: 1; border-radius: 8px; }
+.react-grid-item > .react-resizable-handle::after { border-color: var(--c-fg-muted); }
+.react-grid-item.resizing, .react-grid-item.react-draggable-dragging { z-index: 10; }

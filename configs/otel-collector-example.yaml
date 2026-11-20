@@ -1,0 +1,52 @@
+# ============================================
+# OpenTelemetry Collector 直推 SData 对接清单（T113/M1 验收）
+# 前置：
+#   1. SData 开启标准 OTLP 接收（/v1/logs|traces|metrics + gRPC）
+#      主端口（HTTP/1+2，明文 h2c 需 SData:Listeners 加 grpc 标记端口，见第 3 步）
+#   2. 接入鉴权：SData:Ingest:InitialApiKey（或已创建的接入 Key）
+#      兼容 X-Api-Key 头 / Authorization: Bearer / Basic(password=Key)
+#   3. gRPC 直连建议：configs/system.yaml 加
+#        SData:Listeners: [ { Port: 4317, Protocol: grpc } ]   # grpc=纯 HTTP/2（T112 已实现）
+#      HTTP 通道可用 4318：{ Port: 4318, Protocol: http }
+# ============================================
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:0        # Collector 自身监听地址（应用侧按需修改）
+      http:
+        endpoint: 127.0.0.1:0
+
+exporters:
+  # SData OTLP/HTTP 端点（主端口 5300，标准路径 /v1/*）
+  otlphttp/sdata:
+    endpoint: http://127.0.0.1:5300 # Collector 自动追加 /v1/{signal}
+    headers:
+      X-Api-Key: ${env:SDATA_INGESTION_KEY}     # 或 Authorization: Bearer <key>
+
+  # gRPC 直连（经 SData:Listeners 的 4317 grpc 端口）
+  otlp/sdata-grpc:
+    endpoint: 127.0.0.1:4317
+    tls:
+      insecure: true
+    headers:
+      authorization: Bearer ${env:SDATA_INGESTION_KEY}
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [otlphttp/sdata]
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/sdata]
+    metrics:
+      receivers: [otlp]
+      exporters: [otlphttp/sdata]
+
+# 说明：
+# - SData 端 OTLP proto 与 JSON 双格式均可（Content-Type: application/x-protobuf 或 application/json）
+# - gzip 请求体自动解压；gRPC gzip 自动支持
+# - 缓冲满时：HTTP 返回 429/partialSuccess、gRPC 返回 partialSuccess 计数，Collector 自动重试
+# - 旧路径 /ingest/otlp/v1/* 保留一个版本周期后废弃（迁移到 /v1/*）

@@ -1,0 +1,43 @@
+[
+  {
+    "name": "logs",
+    "sql": "SELECT * FROM (\nSELECT \"service\", count(*) AS value\nFROM {{logs}}\nWHERE ts >= $start AND ts < $end\nGROUP BY \"service\"\n) ORDER BY value DESC LIMIT 10000",
+    "sampleSql": "SELECT ts, id, service, severity, body, trace_id, span_id, source\nFROM {{logs}}\nWHERE ts >= $start AND ts < $end\nORDER BY ts DESC\nLIMIT 500",
+    "parameters": {}
+  },
+  {
+    "name": "metric",
+    "sql": "SELECT * FROM (\nSELECT json_extract_string(CASE WHEN json_valid(labels) THEN labels ELSE NULL END, $jp3) AS \"labels[\"\"host,name\"\"]\", avg(TRY_CAST(\"value\" AS DOUBLE)) AS value\nFROM {{metrics}}\nWHERE ts >= $start AND ts < $end AND (((name = $cf0) AND (json_extract_string(CASE WHEN json_valid(labels) THEN labels ELSE NULL END, $jp1) = $p2)))\nGROUP BY \"labels[\"\"host,name\"\"]\"\n) ORDER BY value DESC LIMIT 10000",
+    "sampleSql": "SELECT ts, name, value, labels, kind\nFROM {{metrics}}\nWHERE ts >= $start AND ts < $end AND ((((name = $cf0) AND (json_extract_string(CASE WHEN json_valid(labels) THEN labels ELSE NULL END, $jp1) = $p2))))\nORDER BY ts DESC\nLIMIT 500",
+    "parameters": {
+      "cf0": "cpu'usage",
+      "jp1": "$.\"env\"",
+      "p2": "a'b",
+      "jp3": "$.\"host,name\""
+    }
+  },
+  {
+    "name": "delta",
+    "sql": "SELECT * FROM (\nSELECT json_extract_string(CASE WHEN json_valid(labels) THEN labels ELSE NULL END, $jp1) AS \"labels[\"\"host,name\"\"]\", sum(TRY_CAST(\"value\" AS DOUBLE)) AS value\nFROM (SELECT * EXCLUDE (value, previous_value), CASE WHEN previous_value IS NULL THEN NULL ELSE value - previous_value END AS value FROM (SELECT *, lag(value) OVER (PARTITION BY name, labels ORDER BY ts) AS previous_value FROM {{metrics}} WHERE ts >= $start AND ts < $end AND (((name = $cf0)))))\nWHERE ts >= $start AND ts < $end\nGROUP BY \"labels[\"\"host,name\"\"]\"\n) ORDER BY value DESC LIMIT 10000",
+    "sampleSql": "SELECT ts, name, value, labels, kind\nFROM {{metrics}}\nWHERE ts >= $start AND ts < $end AND ((((name = $cf0))))\nORDER BY ts DESC\nLIMIT 500",
+    "parameters": {
+      "cf0": "cpu'usage",
+      "jp1": "$.\"host,name\""
+    }
+  },
+  {
+    "name": "trace",
+    "sql": "SELECT * FROM (\nSELECT \"service\", quantile_cont((TRY_CAST(\"duration_us\" AS DOUBLE) / NULLIF(CAST($cf0 AS DOUBLE), 0)), $cf1) AS value\nFROM {{traces}}\nWHERE ts >= $start AND ts < $end\nGROUP BY \"service\"\n) ORDER BY value DESC LIMIT 10000",
+    "sampleSql": "SELECT ts, service, name, duration_us, status, trace_id, span_id, parent_span_id, attributes, kind, resource, events\nFROM {{traces}}\nWHERE ts >= $start AND ts < $end\nORDER BY ts DESC\nLIMIT 500",
+    "parameters": {
+      "cf0": 1000,
+      "cf1": 0.99
+    }
+  },
+  {
+    "name": "session",
+    "sql": "SELECT * FROM (\nSELECT \"domain\", count(*) AS value\nFROM (SELECT project_key, session_id, min(ts) AS ts, arg_max(user_agent, ts) AS user_agent, arg_max(domain, ts) AS domain FROM {{sessions}} WHERE ts >= $start AND ts < $end GROUP BY project_key, session_id)\nWHERE ts >= $start AND ts < $end\nGROUP BY \"domain\"\n) ORDER BY value DESC LIMIT 10000",
+    "sampleSql": "SELECT ts, project_key, session_id, user_agent, domain\nFROM (SELECT project_key, session_id, min(ts) AS ts, arg_max(user_agent, ts) AS user_agent, arg_max(domain, ts) AS domain FROM {{sessions}} WHERE ts >= $start AND ts < $end GROUP BY project_key, session_id)\nWHERE ts >= $start AND ts < $end\nORDER BY ts DESC\nLIMIT 500",
+    "parameters": {}
+  }
+]

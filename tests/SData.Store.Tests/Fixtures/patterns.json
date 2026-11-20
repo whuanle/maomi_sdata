@@ -1,0 +1,14 @@
+{
+  "sql": "WITH source_events AS (\n  SELECT ts, CAST(\"body\" AS VARCHAR) AS raw_text, lower(coalesce(severity, '')) AS level, to_json(struct_pack(ts := \"ts\", id := \"id\", service := \"service\", severity := \"severity\", body := \"body\", trace_id := \"trace_id\", span_id := \"span_id\", source := \"source\", attributes := \"attributes\", resource := \"resource\")) AS sample\n  FROM {{logs}}\n  WHERE ts >= $start AND ts < $end\n), normalized AS (\n  SELECT ts, trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(raw_text, $cf1, $cf0, 'g'), $cf2, $cf0, 'g'), $cf3, $cf0, 'g'), $cf4, $cf0, 'g'), $cf5, $cf0, 'g'), $cf6, $cf0, 'g'), $cf7, $cf8, 'g')) AS pattern, level, sample\n  FROM source_events WHERE raw_text IS NOT NULL AND length(trim(raw_text)) > 0\n), bucketed AS (\n  SELECT *, least(29, greatest(0, CAST(floor(epoch(ts - $start) / nullif(epoch($end - $start), 0) * 30) AS INTEGER))) AS bucket\n  FROM normalized\n), totals AS (\n  SELECT pattern, level, count(*) AS count, arg_max(sample, ts) AS sample\n  FROM bucketed GROUP BY pattern, level\n), top_patterns AS (\n  SELECT *, count(*) OVER () AS total_patterns FROM totals\n  ORDER BY count DESC, pattern, level LIMIT 200\n), bins AS (\n  SELECT b.pattern, b.level, b.bucket, count(*) AS count\n  FROM bucketed b INNER JOIN top_patterns p ON b.pattern = p.pattern AND b.level = p.level\n  GROUP BY b.pattern, b.level, b.bucket\n), trends AS (\n  SELECT pattern, level, to_json(list(struct_pack(bucket := bucket, count := count) ORDER BY bucket)) AS trend\n  FROM bins GROUP BY pattern, level\n)\nSELECT p.pattern, p.level, p.count, p.sample, p.total_patterns, t.trend\nFROM top_patterns p INNER JOIN trends t ON p.pattern = t.pattern AND p.level = t.level\nORDER BY p.count DESC, p.pattern, p.level",
+  "parameters": {
+    "cf0": "<*>",
+    "cf1": "https?://[^\\s]+",
+    "cf2": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+    "cf3": "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    "cf4": "\\b[0-9]{1,3}(\\.[0-9]{1,3}){3}\\b",
+    "cf5": "\\b[0-9a-fA-F]{16,}\\b",
+    "cf6": "[0-9]+(\\.[0-9]+)?",
+    "cf7": "\\s+",
+    "cf8": " "
+  }
+}

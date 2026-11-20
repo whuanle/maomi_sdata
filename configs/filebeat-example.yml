@@ -1,0 +1,44 @@
+# ============================================
+# Filebeat 直推 SData 的 _bulk 写入兼容端点（T120/T122）
+# 前置条件：
+#   1. SData 开启 9200 别名端口：configs/system.yaml 中
+#      SData:Listeners: [ { Port: 9200, Protocol: http } ]（由 T112 的通用附加监听实现）
+#   2. SData 接入鉴权：SData:Ingest:InitialApiKey（或已创建的接入 Key）作为 Basic password
+#      Filebeat ES 输出固定发 Basic auth；SData 兼容 X-Api-Key / Bearer / Basic(password=Key)
+#   3. ES Bulk 端点仅支持写入兼容（index/create → 日志缓冲；update/delete 返回单项错误；
+#      缓冲满整批 429，Filebeat 自动重试）；不做 _search
+# ============================================
+
+filebeat.inputs:
+  # 按需替换为实际日志路径
+  - type: filestream
+    id: sdata-app-log
+    enabled: true
+    paths:
+      - /var/log/myapp/*.log
+    # 每行一条日志时建议关闭多行合并；多行堆栈请按需开启
+    # parsers:
+    #   - multiline:
+    #       pattern: '^\s'
+    #       negate: true
+    #       match: after
+
+output.elasticsearch:
+  # SData 的 ES Bulk 兼容端点（9200 别名端口）
+  hosts: ["http://127.0.0.1:9200"]
+  # Basic auth：username 任意，password = SData 接入 Key（SData:Ingest:InitialApiKey）
+  username: "sdata"
+  password: "sdata-dev-ingest-key"
+
+  # _index 将成为 logs.source 与 service（在 SData 查询面按来源过滤）
+  indices:
+    - index: "logs-%{[agent][name]}-%{+yyyy.MM.dd}"
+
+  # SData 缓冲满返回 429 背压，Filebeat 注册表保证不丢事件
+  backoff.init: 1s
+  backoff.max: 60s
+  bulk_max_size: 50
+
+# 内网环境关闭遥测上报
+queue.mem.events: 256
+logging.level: info

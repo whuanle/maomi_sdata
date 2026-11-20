@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn>
+		<IsTestProject>true</IsTestProject>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="$(RepoRoot)\src\store\SData.Store.Core\SData.Store.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)/src/alerts/SData.Alerts.Core/SData.Alerts.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)/src/agents/SData.Agents.Core/SData.Agents.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)/src/ingest/SData.Ingest.Core/SData.Ingest.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\settings\SData.Settings.Core\SData.Settings.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\rum\SData.Rum.Core\SData.Rum.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Update="Fixtures\service-map.json" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="Fixtures\patterns.json" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="Fixtures\heatmap.json" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="Fixtures\heatmap-scales.json" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="Fixtures\table.json" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="Fixtures\number.json" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="Fixtures\pie.json" CopyToOutputDirectory="PreserveNewest" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+	</ItemGroup>
+
+</Project>

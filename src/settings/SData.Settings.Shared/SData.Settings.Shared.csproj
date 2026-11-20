@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="$(RepoRoot)\src\infra\SData.Infra.Shared\SData.Infra.Shared.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\infra\SData.Infra.Configuration.Shared\SData.Infra.Configuration.Shared.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="MediatR" />
+		<PackageReference Include="FluentValidation" />
+	</ItemGroup>
+
+</Project>

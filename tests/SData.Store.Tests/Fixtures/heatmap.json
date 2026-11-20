@@ -1,0 +1,8 @@
+{
+  "sql": "WITH filtered AS (\n  SELECT ts, CAST(\"duration_us\" AS DOUBLE) AS sample\n  FROM {{traces}}\n  WHERE ts >= $start AND ts < $end AND (service = $service)\n    AND \"duration_us\" IS NOT NULL AND isfinite(CAST(\"duration_us\" AS DOUBLE)) AND duration_us >= 0\n), bounds AS (\n  SELECT min(sample) AS lo, CASE WHEN max(sample) > min(sample) THEN max(sample)\n    ELSE min(sample) + greatest(abs(min(sample)) * 0.01, 1) END AS hi FROM filtered\n), settings AS (\n  SELECT greatest(CAST($chart_bucket AS INTERVAL), INTERVAL '1 second' * greatest(1, ceil(date_diff('second', CAST($start AS TIMESTAMP), CAST($end AS TIMESTAMP)) / 200.0))) AS step\n), bucketed AS (\n  SELECT time_bucket(step, ts) AS ts_bucket,\n    least($cf0 - 1, greatest(0, CAST(floor((sample - lo) / (hi - lo) * $cf0) AS INTEGER))) AS y_bucket,\n    lo, hi, epoch(step) * 1000 AS __bucket_ms\n  FROM filtered CROSS JOIN bounds CROSS JOIN settings\n)\nSELECT ts_bucket, y_bucket, lo + (hi - lo) * y_bucket / $cf0 AS bucket_min,\n  lo + (hi - lo) * (y_bucket + 1) / $cf0 AS bucket_max, count(*) AS value, __bucket_ms\nFROM bucketed\nGROUP BY ts_bucket, y_bucket, lo, hi, __bucket_ms\nORDER BY ts_bucket, y_bucket\nLIMIT 10000",
+  "parameters": {
+    "service": "api",
+    "cf0": 40,
+    "chart_bucket": "1 minute"
+  }
+}

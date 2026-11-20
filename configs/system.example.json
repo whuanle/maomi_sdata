@@ -1,0 +1,152 @@
+{
+  "SData": {
+    "Debug": false,
+    "Name": "sdata",
+    "Port": 5300,
+    "Server": "http://localhost:5300",
+    "WebUI": true,
+    "_comment_Notifications": "自建通知服务与自定义 Webhook 的完整 origin 白名单，修改后重启；本机和元数据地址始终拒绝",
+    "NotificationAllowedOrigins": [],
+    "Alerts": {
+      "Enabled": true,
+      "MaxEnabledRules": 50,
+      "QueryTimeoutSeconds": 5,
+      "BudgetSecondsPerMinute": 15,
+      "MaxPendingDeliveries": 1000
+    },
+    "_comment_Rum": "项目允许站点在 Client Sessions 接入配置中管理；空列表禁止采集。CorsOrigins 是可选额外全局上限，非空时须与项目白名单同时匹配，修改文件后重启生效。",
+    "Rum": { "CorsOrigins": [] },
+    "Database": {
+      "Path": "data/sdata.db"
+    },
+    "DuckDb": {
+      "Path": "data/sdata.duckdb",
+      "MemoryLimit": "512MB",
+      "Threads": 0,
+      "MaxQueryDays": 31,
+      "ColdMaxQueryDays": 366,
+      "Retention": {
+        "Logs": 30,
+        "Traces": 14,
+        "Metrics": 90,
+        "Iot": 365
+      }
+    },
+    "Auth": {
+      "InitialAdminPassword": "sdata@123",
+      "TokenExpireMinutes": 720
+    },
+    "Ingest": {
+      "RequireAuth": true,
+      "InitialApiKey": "",
+      "BufferCapacity": 100000,
+      "BatchSize": 5000,
+      "FlushIntervalMs": 200
+    },
+    "OTLP": {
+      "Trace": "",
+      "Metrics": "",
+      "Protocol": "grpc",
+      "TraceHeaders": "",
+      "MetricsHeaders": ""
+    },
+    "_comment_C4": "以下为 C4 契约配置键模板（EsBulk/Mqtt/S3/Retention/Listeners），对应任务未实现前键值不生效；Retention 为新三段形态（HotDays/ColdDays），旧 DuckDb.Retention:{X} 兼容映射为 HotDays，迁移完成前请保持两处一致",
+    "EsBulk": {
+      "Enabled": false,
+      "Port": 9200
+    },
+    "Mqtt": {
+      "Port": 1883
+    },
+    "S3": {
+      "Endpoint": "",
+      "Bucket": "",
+      "Prefix": "",
+      "AccessKey": "",
+      "SecretKey": "",
+      "ArchiveGranularity": "day"
+    },
+    "ColdCache": {
+      "Enabled": true,
+      "MaxBytes": 2147483648
+    },
+    "Retention": {
+      "Logs": { "HotDays": 30, "ColdDays": 90 },
+      "Traces": { "HotDays": 14, "ColdDays": 60 },
+      "Metrics": { "HotDays": 90, "ColdDays": 180 },
+      "Iot": { "HotDays": 365, "ColdDays": 0 },
+      "Rum": { "HotDays": 30, "ColdDays": 90 }
+    },
+    "_comment_Compression": "数据压缩：冷存档 parquet 列压缩编码（uncompressed/snappy/gzip/zstd，默认 snappy）；运行时可在系统设置页修改并立即生效，此处为文件默认值",
+    "Compression": {
+      "ArchiveParquetCodec": "snappy"
+    },
+    "Listeners": [],
+    "_comment_MQ": "MQ 日志消费（可选输入通道，默认关闭）。运行时优先读设置键 system:mq（日志消费页管理，多实例，保存后自动热更新）；Mq.Instances 为文件级多实例配置；下方 Kafka/RabbitMq/Pulsar 三节为旧单实例形态，仅在前两者均未配置时合成兼容。Format 白名单: otlp-proto/otlp-json/json/regex/csv/logfmt/syslog/raw",
+    "Mq": {
+      "Instances": [
+        {
+          "Id": 1,
+          "Name": "prod-kafka",
+          "Type": "kafka",
+          "Enabled": false,
+          "BootstrapServers": "broker1:9092,broker2:9092",
+          "GroupId": "sdata-logs",
+          "AutoOffsetReset": "earliest",
+          "Topics": [
+            {
+              "Name": "app-logs",
+              "Format": "regex",
+              "Service": "order-api",
+              "Severity": "INFO",
+              "Parser": {
+                "Pattern": "(?<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+\\[(?<thread>[^\\]]+)\\]\\s+(?<level>\\w+)\\s+(?<logger>\\S+)\\s+-\\s+(?<msg>.*)",
+                "TimestampField": "ts",
+                "SeverityField": "level",
+                "BodyField": "msg",
+                "KeepUnmapped": true
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "Kafka": {
+      "Enabled": false,
+      "BootstrapServers": "",
+      "GroupId": "sdata-logs",
+      "AutoOffsetReset": "earliest",
+      "Topics": [
+        { "Name": "logs-otlp", "Format": "otlp-proto" }
+      ]
+    },
+    "RabbitMq": {
+      "Enabled": false,
+      "Uri": "amqp://guest:guest@localhost:5672/",
+      "Queues": [
+        { "Name": "sdata-logs", "Format": "json", "Service": "myapp" }
+      ]
+    },
+    "Pulsar": {
+      "Enabled": false,
+      "ServiceUrl": "pulsar://localhost:6650",
+      "SubscriptionName": "sdata-logs",
+      "SubscriptionType": "Shared",
+      "Topics": [
+        { "Name": "persistent://public/default/logs", "Format": "otlp-json" }
+      ]
+    }
+  },
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft": "Warning",
+        "Microsoft.AspNetCore": "Warning"
+      }
+    },
+    "WriteTo": [
+      { "Name": "Console" }
+    ]
+  }
+}

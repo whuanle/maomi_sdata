@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>SData.Tool.I18nScanner</RootNamespace>
+		<OutputType>Exe</OutputType>
+		<NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn>
+	</PropertyGroup>
+
+</Project>

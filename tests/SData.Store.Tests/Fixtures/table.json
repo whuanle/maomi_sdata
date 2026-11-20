@@ -1,0 +1,32 @@
+[
+  {
+    "name": "slowest",
+    "sql": "WITH inputs AS (SELECT \"service\", \"name\", 0 AS input_index, CAST(count(*) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end GROUP BY \"service\", \"name\"\nUNION ALL\nSELECT \"service\", \"name\", 1 AS input_index, CAST(quantile_cont(\"duration_us\", $cf0) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end GROUP BY \"service\", \"name\"\nUNION ALL\nSELECT \"service\", \"name\", 2 AS input_index, CAST(count(*) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end AND (status = $status) GROUP BY \"service\", \"name\" HAVING (count(*) > 0)), aligned AS (SELECT \"service\", \"name\", max(CASE WHEN input_index = 0 AND isfinite(value) THEN value END) AS v0, max(CASE WHEN input_index = 1 AND isfinite(value) THEN value END) AS v1, max(CASE WHEN input_index = 2 AND isfinite(value) THEN value END) AS v2 FROM inputs GROUP BY \"service\", \"name\") SELECT \"service\", \"name\", CASE WHEN isfinite(v0) THEN v0 END AS \"requests\", CASE WHEN isfinite(v1) THEN v1 END AS \"p95, \"\"latency\"\"\", CASE WHEN isfinite(v2) THEN v2 END AS \"errors\", CASE WHEN isfinite(v3) THEN v3 END AS \"error %\" FROM (SELECT \"service\", \"name\", v0 AS v0, v1 AS v1, v2 AS v2, ((v2 / NULLIF(v0, 0)) * CAST($cf1 AS DOUBLE)) AS v3 FROM aligned) calculated ORDER BY \"p95, \"\"latency\"\"\" DESC NULLS LAST, \"service\" ASC NULLS LAST, \"name\" ASC NULLS LAST LIMIT $cf2",
+    "parameters": {
+      "status": "error",
+      "cf0": 0.95,
+      "cf1": 100,
+      "cf2": 1
+    }
+  },
+  {
+    "name": "errors",
+    "sql": "WITH inputs AS (SELECT \"service\", \"name\", 0 AS input_index, CAST(count(*) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end GROUP BY \"service\", \"name\"\nUNION ALL\nSELECT \"service\", \"name\", 1 AS input_index, CAST(quantile_cont(\"duration_us\", $cf0) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end GROUP BY \"service\", \"name\"\nUNION ALL\nSELECT \"service\", \"name\", 2 AS input_index, CAST(count(*) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end AND (status = $status) GROUP BY \"service\", \"name\" HAVING (count(*) > 0)), aligned AS (SELECT \"service\", \"name\", max(CASE WHEN input_index = 0 AND isfinite(value) THEN value END) AS v0, max(CASE WHEN input_index = 1 AND isfinite(value) THEN value END) AS v1, max(CASE WHEN input_index = 2 AND isfinite(value) THEN value END) AS v2 FROM inputs GROUP BY \"service\", \"name\") SELECT \"service\", \"name\", CASE WHEN isfinite(v0) THEN v0 END AS \"requests\", CASE WHEN isfinite(v1) THEN v1 END AS \"p95, \"\"latency\"\"\", CASE WHEN isfinite(v2) THEN v2 END AS \"errors\", CASE WHEN isfinite(v3) THEN v3 END AS \"error %\" FROM (SELECT \"service\", \"name\", v0 AS v0, v1 AS v1, v2 AS v2, ((v2 / NULLIF(v0, 0)) * CAST($cf1 AS DOUBLE)) AS v3 FROM aligned) calculated ORDER BY \"errors\" DESC NULLS LAST, \"service\" ASC NULLS LAST, \"name\" ASC NULLS LAST LIMIT $cf2",
+    "parameters": {
+      "status": "error",
+      "cf0": 0.95,
+      "cf1": 100,
+      "cf2": 2
+    }
+  },
+  {
+    "name": "scalar",
+    "sql": "WITH inputs AS (SELECT 0 AS input_index, CAST(count(*) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end\nUNION ALL\nSELECT 1 AS input_index, CAST(quantile_cont(\"duration_us\", $cf0) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end\nUNION ALL\nSELECT 2 AS input_index, CAST(count(*) AS DOUBLE) AS value FROM {{traces}} WHERE ts >= $start AND ts < $end AND (status = $status) HAVING (count(*) > 0)), aligned AS (SELECT max(CASE WHEN input_index = 0 AND isfinite(value) THEN value END) AS v0, max(CASE WHEN input_index = 1 AND isfinite(value) THEN value END) AS v1, max(CASE WHEN input_index = 2 AND isfinite(value) THEN value END) AS v2 FROM inputs) SELECT CASE WHEN isfinite(v0) THEN v0 END AS \"requests\", CASE WHEN isfinite(v1) THEN v1 END AS \"p95, \"\"latency\"\"\", CASE WHEN isfinite(v2) THEN v2 END AS \"errors\", CASE WHEN isfinite(v3) THEN v3 END AS \"error %\" FROM (SELECT v0 AS v0, v1 AS v1, v2 AS v2, ((v2 / NULLIF(v0, 0)) * CAST($cf1 AS DOUBLE)) AS v3 FROM aligned) calculated ORDER BY \"requests\" DESC NULLS LAST LIMIT $cf2",
+    "parameters": {
+      "status": "error",
+      "cf0": 0.95,
+      "cf1": 100,
+      "cf2": 10
+    }
+  }
+]

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "log",
+    "domain": "traces",
+    "config": {
+      "field": "duration_us",
+      "bins": 60,
+      "scale": "log",
+      "colorScale": "log"
+    },
+    "sql": "WITH filtered AS (\n  SELECT ts, CAST(\"duration_us\" AS DOUBLE) AS sample\n  FROM {{traces}}\n  WHERE ts >= $start AND ts < $end AND (service = $service)\n    AND \"duration_us\" IS NOT NULL AND isfinite(CAST(\"duration_us\" AS DOUBLE)) AND duration_us >= 0\n), positioned AS (\n  SELECT ts, sample, sign(sample) * log10(1 + abs(sample)) AS position FROM filtered\n), bounds AS (\n  SELECT floor(min(position)) AS lo, CASE WHEN ceil(max(position)) > floor(min(position)) THEN ceil(max(position))\n    ELSE floor(min(position)) + greatest(abs(floor(min(position))) * 0.01, 1) END AS hi, max(sample) AS sample_max FROM positioned\n), settings AS (\n  SELECT INTERVAL '1 second' * greatest(1, ceil(epoch(CAST($end AS TIMESTAMP) - CAST($start AS TIMESTAMP)) / $cf1)) AS step\n), bucketed AS (\n  SELECT time_bucket(step, ts) AS ts_bucket,\n    least($cf0 - 1, greatest(0, CAST(floor((position - lo) / (hi - lo) * $cf0) AS INTEGER))) AS y_bucket,\n    lo, hi, sample_max, epoch(step) * 1000 AS __bucket_ms\n  FROM positioned CROSS JOIN bounds CROSS JOIN settings\n)\nSELECT ts_bucket, y_bucket, sign((lo + (hi - lo) * y_bucket / $cf0)) * (pow(10, abs((lo + (hi - lo) * y_bucket / $cf0))) - 1) AS bucket_min,\n  sign((lo + (hi - lo) * (y_bucket + 1) / $cf0)) * (pow(10, abs((lo + (hi - lo) * (y_bucket + 1) / $cf0))) - 1) AS bucket_max,\n  count(*) AS value, __bucket_ms, lo AS __scale_min, hi AS __scale_max, sample_max AS __sample_max\nFROM bucketed\nGROUP BY ts_bucket, y_bucket, lo, hi, sample_max, __bucket_ms\nORDER BY ts_bucket, y_bucket\nLIMIT 10001",
+    "parameters": {
+      "service": "api",
+      "chart_bucket": "1 minute",
+      "cf0": 60,
+      "cf1": 159
+    }
+  },
+  {
+    "name": "linear",
+    "domain": "traces",
+    "config": {
+      "field": "duration_us",
+      "bins": 40
+    },
+    "sql": "WITH filtered AS (\n  SELECT ts, CAST(\"duration_us\" AS DOUBLE) AS sample\n  FROM {{traces}}\n  WHERE ts >= $start AND ts < $end AND (service = $service)\n    AND \"duration_us\" IS NOT NULL AND isfinite(CAST(\"duration_us\" AS DOUBLE)) AND duration_us >= 0\n), positioned AS (\n  SELECT ts, sample, sample AS position FROM filtered\n), bounds AS (\n  SELECT min(position) AS lo, CASE WHEN max(position) > min(position) THEN max(position)\n    ELSE min(position) + greatest(abs(min(position)) * 0.01, 1) END AS hi, max(sample) AS sample_max FROM positioned\n), settings AS (\n  SELECT greatest(CAST($chart_bucket AS INTERVAL), INTERVAL '1 second' * greatest(1, ceil(epoch(CAST($end AS TIMESTAMP) - CAST($start AS TIMESTAMP)) / $cf1))) AS step\n), bucketed AS (\n  SELECT time_bucket(step, ts) AS ts_bucket,\n    least($cf0 - 1, greatest(0, CAST(floor((position - lo) / (hi - lo) * $cf0) AS INTEGER))) AS y_bucket,\n    lo, hi, sample_max, epoch(step) * 1000 AS __bucket_ms\n  FROM positioned CROSS JOIN bounds CROSS JOIN settings\n)\nSELECT ts_bucket, y_bucket, (lo + (hi - lo) * y_bucket / $cf0) AS bucket_min,\n  (lo + (hi - lo) * (y_bucket + 1) / $cf0) AS bucket_max,\n  count(*) AS value, __bucket_ms, lo AS __scale_min, hi AS __scale_max, sample_max AS __sample_max\nFROM bucketed\nGROUP BY ts_bucket, y_bucket, lo, hi, sample_max, __bucket_ms\nORDER BY ts_bucket, y_bucket\nLIMIT 10001",
+    "parameters": {
+      "service": "api",
+      "chart_bucket": "1 minute",
+      "cf0": 40,
+      "cf1": 239
+    }
+  },
+  {
+    "name": "metric-log",
+    "domain": "metrics",
+    "config": {
+      "field": "value",
+      "bins": 80,
+      "scale": "log"
+    },
+    "sql": "WITH filtered AS (\n  SELECT ts, CAST(\"value\" AS DOUBLE) AS sample\n  FROM {{metrics}}\n  WHERE ts >= $start AND ts < $end AND (name = $service)\n    AND \"value\" IS NOT NULL AND isfinite(CAST(\"value\" AS DOUBLE))\n), positioned AS (\n  SELECT ts, sample, sign(sample) * log10(1 + abs(sample)) AS position FROM filtered\n), bounds AS (\n  SELECT floor(min(position)) AS lo, CASE WHEN ceil(max(position)) > floor(min(position)) THEN ceil(max(position))\n    ELSE floor(min(position)) + greatest(abs(floor(min(position))) * 0.01, 1) END AS hi, max(sample) AS sample_max FROM positioned\n), settings AS (\n  SELECT INTERVAL '1 second' * greatest(1, ceil(epoch(CAST($end AS TIMESTAMP) - CAST($start AS TIMESTAMP)) / $cf1)) AS step\n), bucketed AS (\n  SELECT time_bucket(step, ts) AS ts_bucket,\n    least($cf0 - 1, greatest(0, CAST(floor((position - lo) / (hi - lo) * $cf0) AS INTEGER))) AS y_bucket,\n    lo, hi, sample_max, epoch(step) * 1000 AS __bucket_ms\n  FROM positioned CROSS JOIN bounds CROSS JOIN settings\n)\nSELECT ts_bucket, y_bucket, sign((lo + (hi - lo) * y_bucket / $cf0)) * (pow(10, abs((lo + (hi - lo) * y_bucket / $cf0))) - 1) AS bucket_min,\n  sign((lo + (hi - lo) * (y_bucket + 1) / $cf0)) * (pow(10, abs((lo + (hi - lo) * (y_bucket + 1) / $cf0))) - 1) AS bucket_max,\n  count(*) AS value, __bucket_ms, lo AS __scale_min, hi AS __scale_max, sample_max AS __sample_max\nFROM bucketed\nGROUP BY ts_bucket, y_bucket, lo, hi, sample_max, __bucket_ms\nORDER BY ts_bucket, y_bucket\nLIMIT 10001",
+    "parameters": {
+      "service": "api",
+      "chart_bucket": "1 minute",
+      "cf0": 80,
+      "cf1": 119
+    }
+  }
+]

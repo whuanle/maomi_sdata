@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn>
+		<IsTestProject>true</IsTestProject>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="$(RepoRoot)\src\database\SData.Database.Sqlite\SData.Database.Sqlite.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\iot\SData.Iot.Core\SData.Iot.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\rum\SData.Rum.Core\SData.Rum.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+	</ItemGroup>
+
+</Project>

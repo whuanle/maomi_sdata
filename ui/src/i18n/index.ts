@@ -1,0 +1,16 @@
+import i18n from 'i18next';
+import { initReactI18next } from 'react-i18next';
+import zhCN from './locales/zh-CN/common.json';
+import enUS from './locales/en-US/common.json';
+
+void i18n.use(initReactI18next).init({
+  resources: {
+    'zh-CN': { translation: zhCN },
+    'en-US': { translation: enUS },
+  },
+  lng: localStorage.getItem('sdata-web-locale') ?? 'zh-CN',
+  fallbackLng: 'zh-CN',
+  interpolation: { escapeValue: false },
+});
+
+export default i18n;

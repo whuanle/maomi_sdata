@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn>
+		<IsTestProject>true</IsTestProject>
+	</PropertyGroup>
+
+	<!-- T112 gRPC 集成测试：进程内 Kestrel + GrpcChannel 需要 AspNetCore 框架引用 -->
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="$(RepoRoot)\src\ingest\SData.Ingest.Core\SData.Ingest.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\store\SData.Store.Core\SData.Store.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\SData\SData.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Google.Protobuf" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+	</ItemGroup>
+
+</Project>

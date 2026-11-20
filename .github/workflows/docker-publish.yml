@@ -1,0 +1,126 @@
+# 与 moai 共用密钥约定：docker 环境（或 Repository secrets）中的
+# DOCKERHUB_USERNAME / DOCKERHUB_TOKEN；镜像仓库默认 <账号>/sdata。
+name: docker-publish
+
+'on':
+  push:
+    tags: ['v*', '[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment: docker
+    timeout-minutes: 60
+    env:
+      IMAGE_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}
+      IMAGE_REPO: ${{ vars.DOCKERHUB_REPO || 'sdata' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 检出版本代码
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: 校验发布凭据
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::缺少密钥 $name，请配置 docker 环境或 Repository secrets"
+              exit 1
+            fi
+          done
+
+      - name: 解析镜像标签
+        id: meta
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          # 接受 X.Y.Z / vX.Y.Z，可带预发布与构建元数据；元数据不进入 Docker tag。
+          NUMBER='(0|[1-9][0-9]*)'
+          IDENTIFIER='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          SEMVER="^${NUMBER}\.${NUMBER}\.${NUMBER}(-${IDENTIFIER}(\.${IDENTIFIER})*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"
+          if [[ ! "$VERSION" =~ $SEMVER ]]; then
+            echo "::error::tag 必须为 X.Y.Z / vX.Y.Z，可带 -rc.1 或 +build.7"
+            exit 1
+          fi
+          VERSION="${VERSION%%+*}"
+          if [ "${#VERSION}" -gt 128 ]; then
+            echo "::error::镜像版本标签不能超过 128 个字符"
+            exit 1
+          fi
+          if [[ ! "$IMAGE_NAMESPACE" =~ ^[a-z0-9]+([_-][a-z0-9]+)*$ ]] ||
+             [[ ! "$IMAGE_REPO" =~ ^[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*$ ]]; then
+            echo "::error::Docker Hub 命名空间或仓库名不合法，请使用小写镜像名称"
+            exit 1
+          fi
+          IMAGE="$IMAGE_NAMESPACE/$IMAGE_REPO"
+          COMMIT_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          {
+            echo "version=$VERSION"
+            echo "commit_sha=$COMMIT_SHA"
+            echo 'tags<<EOF'
+            echo "$IMAGE:$VERSION"
+            echo "$IMAGE:sha-$SHORT_SHA"
+            if [[ "$VERSION" != *-* ]]; then
+              echo "$IMAGE:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 准备 buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录 Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 构建并推送
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          # Dockerfile 的 DuckDB 发布 RID 固定为 linux-x64，不提供伪多架构镜像。
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=SData
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.commit_sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=sdata
+          cache-to: type=gha,scope=sdata,mode=max
+          provenance: false
+          sbom: false
+
+      - name: 发布结果
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo '### SData Docker Hub 发布成功'
+            echo '- 平台：`linux/amd64`'
+            while IFS= read -r tag; do
+              printf -- '- `%s`\n' "$tag"
+            done <<< "$IMAGE_TAGS"
+            printf -- '- Digest：`%s`\n' "$IMAGE_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"

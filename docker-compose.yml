@@ -1,0 +1,21 @@
+version: "3.8"
+
+# SData 内网单机部署：单容器（前端内嵌 wwwroot 同源托管），SQLite + DuckDB 数据落 /app/data 卷
+services:
+  sdata:
+    build: .
+    container_name: sdata
+    restart: unless-stopped
+    ports:
+      - "5300:5300"
+    volumes:
+      - ./data:/app/data           # sdata.db + sdata.duckdb + 日志
+      - ./configs:/app/configs     # system.json（从 system.example.json 复制修改）
+    environment:
+      - SDATA_FILE=/app/configs/system.json
+      - ASPNETCORE_ENVIRONMENT=Production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5300/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,46 @@
+[
+  {
+    "name": "map",
+    "request": {
+      "from": "2026-11-18T23:59:00Z",
+      "to": "2026-11-19T00:01:00Z",
+      "parameters": {
+        "sampling": 100,
+        "service": "api",
+        "bucket": 3
+      },
+      "rowLimit": 500,
+      "sql": "WITH windowed AS MATERIALIZED (\n SELECT * FROM {{traces}} WHERE ts >= $start AND ts < $end AND trace_id IS NOT NULL AND trace_id <> ''\n), matched AS (\n SELECT DISTINCT trace_id FROM windowed\n WHERE ($service = '' OR service = $service) AND (TRUE)\n), sampled AS (\n SELECT trace_id FROM matched WHERE hash(trace_id) % 100 < CAST($sampling AS UBIGINT)\n), spans AS MATERIALIZED (\n SELECT * EXCLUDE (rank) FROM (\n SELECT w.*, row_number() OVER (PARTITION BY w.trace_id, w.span_id ORDER BY w.ts, w.service, w.parent_span_id NULLS FIRST, w.name, w.duration_us, w.status, w.kind) AS rank\n FROM windowed w INNER JOIN sampled s ON w.trace_id = s.trace_id\n WHERE w.span_id IS NOT NULL AND w.span_id <> ''\n ) WHERE rank = 1\n), relations AS MATERIALIZED (\n SELECT c.*, p.service AS parent_service, p.span_id AS found_parent FROM spans c\n LEFT JOIN spans p ON c.trace_id = p.trace_id AND c.parent_span_id = p.span_id\n),\nnodes AS (\n SELECT service, count(*) AS calls, count(DISTINCT trace_id) AS traces,\n count(*) FILTER (WHERE status = 'error') AS errors, avg(duration_us) AS duration,\n min(ts) AS first_seen, max(ts) AS last_seen FROM spans GROUP BY service\n), edges AS (\n SELECT parent_service AS source, service AS target, count(*) AS calls,\n count(DISTINCT trace_id) AS traces, count(*) FILTER (WHERE status = 'error') AS errors,\n avg(duration_us) AS duration, min(ts) AS first_seen, max(ts) AS last_seen\n FROM relations WHERE found_parent IS NOT NULL AND parent_service <> service GROUP BY parent_service, service\n), top_nodes AS (SELECT * FROM nodes ORDER BY calls DESC, service LIMIT 100),\ntop_edges AS (\n SELECT e.* FROM edges e INNER JOIN top_nodes a ON e.source = a.service INNER JOIN top_nodes b ON e.target = b.service\n ORDER BY e.calls DESC, e.source, e.target LIMIT 300\n), buckets AS (\n SELECT floor(epoch(ts) / $bucket) * $bucket * 1000 AS bucket_ms, count(DISTINCT trace_id) AS traces FROM spans GROUP BY bucket_ms\n)\nSELECT 'node' AS type, service AS source, '' AS target, calls, traces, errors, duration, strftime(first_seen, '%Y-%m-%dT%H:%M:%S.%fZ') AS first_seen, strftime(last_seen, '%Y-%m-%dT%H:%M:%S.%fZ') AS last_seen FROM top_nodes\nUNION ALL\nSELECT 'edge', source, target, calls, traces, errors, duration, strftime(first_seen, '%Y-%m-%dT%H:%M:%S.%fZ'), strftime(last_seen, '%Y-%m-%dT%H:%M:%S.%fZ') FROM top_edges\nUNION ALL\nSELECT 'bucket', CAST(bucket_ms AS VARCHAR), '', 0, traces, 0, 0, '', '' FROM buckets\nUNION ALL\nSELECT 'meta', '', '', (SELECT count(*) FROM nodes), (SELECT count(*) FROM sampled),\n (SELECT count(*) FROM relations WHERE parent_span_id IS NOT NULL AND parent_span_id <> '' AND found_parent IS NULL),\n (SELECT count(*) FROM edges), CAST((SELECT count(*) FROM relations WHERE parent_span_id IS NULL OR parent_span_id = '') AS VARCHAR),\n CAST((SELECT count(*) FROM matched) AS VARCHAR)"
+    }
+  },
+  {
+    "name": "sampled",
+    "request": {
+      "from": "2026-11-18T23:59:00Z",
+      "to": "2026-11-19T00:01:00Z",
+      "parameters": {
+        "sampling": 50,
+        "service": "api",
+        "bucket": 3
+      },
+      "rowLimit": 500,
+      "sql": "WITH windowed AS MATERIALIZED (\n SELECT * FROM {{traces}} WHERE ts >= $start AND ts < $end AND trace_id IS NOT NULL AND trace_id <> ''\n), matched AS (\n SELECT DISTINCT trace_id FROM windowed\n WHERE ($service = '' OR service = $service) AND (TRUE)\n), sampled AS (\n SELECT trace_id FROM matched WHERE hash(trace_id) % 100 < CAST($sampling AS UBIGINT)\n), spans AS MATERIALIZED (\n SELECT * EXCLUDE (rank) FROM (\n SELECT w.*, row_number() OVER (PARTITION BY w.trace_id, w.span_id ORDER BY w.ts, w.service, w.parent_span_id NULLS FIRST, w.name, w.duration_us, w.status, w.kind) AS rank\n FROM windowed w INNER JOIN sampled s ON w.trace_id = s.trace_id\n WHERE w.span_id IS NOT NULL AND w.span_id <> ''\n ) WHERE rank = 1\n), relations AS MATERIALIZED (\n SELECT c.*, p.service AS parent_service, p.span_id AS found_parent FROM spans c\n LEFT JOIN spans p ON c.trace_id = p.trace_id AND c.parent_span_id = p.span_id\n),\nnodes AS (\n SELECT service, count(*) AS calls, count(DISTINCT trace_id) AS traces,\n count(*) FILTER (WHERE status = 'error') AS errors, avg(duration_us) AS duration,\n min(ts) AS first_seen, max(ts) AS last_seen FROM spans GROUP BY service\n), edges AS (\n SELECT parent_service AS source, service AS target, count(*) AS calls,\n count(DISTINCT trace_id) AS traces, count(*) FILTER (WHERE status = 'error') AS errors,\n avg(duration_us) AS duration, min(ts) AS first_seen, max(ts) AS last_seen\n FROM relations WHERE found_parent IS NOT NULL AND parent_service <> service GROUP BY parent_service, service\n), top_nodes AS (SELECT * FROM nodes ORDER BY calls DESC, service LIMIT 100),\ntop_edges AS (\n SELECT e.* FROM edges e INNER JOIN top_nodes a ON e.source = a.service INNER JOIN top_nodes b ON e.target = b.service\n ORDER BY e.calls DESC, e.source, e.target LIMIT 300\n), buckets AS (\n SELECT floor(epoch(ts) / $bucket) * $bucket * 1000 AS bucket_ms, count(DISTINCT trace_id) AS traces FROM spans GROUP BY bucket_ms\n)\nSELECT 'node' AS type, service AS source, '' AS target, calls, traces, errors, duration, strftime(first_seen, '%Y-%m-%dT%H:%M:%S.%fZ') AS first_seen, strftime(last_seen, '%Y-%m-%dT%H:%M:%S.%fZ') AS last_seen FROM top_nodes\nUNION ALL\nSELECT 'edge', source, target, calls, traces, errors, duration, strftime(first_seen, '%Y-%m-%dT%H:%M:%S.%fZ'), strftime(last_seen, '%Y-%m-%dT%H:%M:%S.%fZ') FROM top_edges\nUNION ALL\nSELECT 'bucket', CAST(bucket_ms AS VARCHAR), '', 0, traces, 0, 0, '', '' FROM buckets\nUNION ALL\nSELECT 'meta', '', '', (SELECT count(*) FROM nodes), (SELECT count(*) FROM sampled),\n (SELECT count(*) FROM relations WHERE parent_span_id IS NOT NULL AND parent_span_id <> '' AND found_parent IS NULL),\n (SELECT count(*) FROM edges), CAST((SELECT count(*) FROM relations WHERE parent_span_id IS NULL OR parent_span_id = '') AS VARCHAR),\n CAST((SELECT count(*) FROM matched) AS VARCHAR)"
+    }
+  },
+  {
+    "name": "examples",
+    "request": {
+      "from": "2026-11-18T23:59:00Z",
+      "to": "2026-11-19T00:01:00Z",
+      "parameters": {
+        "sampling": 100,
+        "service": "api",
+        "bucket": 3,
+        "source": "api",
+        "target": "db"
+      },
+      "rowLimit": 21,
+      "sql": "WITH windowed AS MATERIALIZED (\n SELECT * FROM {{traces}} WHERE ts >= $start AND ts < $end AND trace_id IS NOT NULL AND trace_id <> ''\n), matched AS (\n SELECT DISTINCT trace_id FROM windowed\n WHERE ($service = '' OR service = $service) AND (TRUE)\n), sampled AS (\n SELECT trace_id FROM matched WHERE hash(trace_id) % 100 < CAST($sampling AS UBIGINT)\n), spans AS MATERIALIZED (\n SELECT * EXCLUDE (rank) FROM (\n SELECT w.*, row_number() OVER (PARTITION BY w.trace_id, w.span_id ORDER BY w.ts, w.service, w.parent_span_id NULLS FIRST, w.name, w.duration_us, w.status, w.kind) AS rank\n FROM windowed w INNER JOIN sampled s ON w.trace_id = s.trace_id\n WHERE w.span_id IS NOT NULL AND w.span_id <> ''\n ) WHERE rank = 1\n), relations AS MATERIALIZED (\n SELECT c.*, p.service AS parent_service, p.span_id AS found_parent FROM spans c\n LEFT JOIN spans p ON c.trace_id = p.trace_id AND c.parent_span_id = p.span_id\n)\nSELECT trace_id, arg_min(name, ts) AS name, min(ts) AS ts, count(*) AS calls\nFROM relations WHERE service = $source AND $target IS NULL\n OR parent_service = $source AND service = $target AND found_parent IS NOT NULL\nGROUP BY trace_id ORDER BY ts DESC, trace_id LIMIT 21"
+    }
+  }
+]
