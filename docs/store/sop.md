@@ -6,7 +6,9 @@
 
 - 搜索告警的预算、热数据限制和超时处置见 [Alerts 运维](../alerts/sop.md)。不要用返回行数推断扫描成本；按生产近似数据复测搜索 P95 与摄取吞吐。
 
-- `SData:DuckDb`：Path / MemoryLimit（默认 512MB）/ Threads（0=自动）/ MaxQueryDays / Retention.{Logs,Traces,Metrics,Iot}。
+- `SData:DuckDb`：Path / MemoryLimit（默认 512MB）/ Threads（默认 2，0=自动）/ MaxConcurrentQueries（默认 1，钳位 1–32）/ QueryTimeoutSeconds（默认30秒，1–300）/ MaxQueryDays / Retention.{Logs,Traces,Metrics,Iot}。
+- 内存限制可在管理员系统设置的 DuckDB 页签手动调大，保存立即生效、重启恢复；容量格式、资源余量及失败处置见 [Settings运维](../settings/sop.md)。文件 MemoryLimit 仅作未保存时的回退。
+- 内存复发排查见[根因复盘](memory-root-cause.md)：启动核对有效内存和线程；资源采样Debug日志含类别，失败时限频Warning记录操作类型与类别。比较结果物化、聚合写放大和摄取积压，不把RSS缓存增长直接认定为泄漏；rollup旧索引启动移除，过期桶随指标总保留期清理。
 - Overview 资源采样：本地 15 秒、S3 完整分页 10 分钟（失败 1 分钟重试，30 秒预算）。S3 需 ListBucket 权限；无列举权限不代表归档不可用。统计只含配置前缀下当前对象，不是服务端磁盘容量。采样不写对象、不执行 CHECKPOINT。
 - 消费统计为 `mq_consumption_yyyymmdd`，沿用日志热保留天数并按小时清理，不上传冷层。10 秒采样的累计数须按会话解释，不可跨样本求和；缓冲繁忙会合并采样并记录 sampling_gaps，不能作为消息审计账本。
 - 消费统计 diagnostics 列启动时幂等补齐；失败批次保留重试时，在 Status 查看共享写入器的安全原因及失败/恢复时间。不要删除 WAL 或通过确认消息绕过失败。
@@ -20,7 +22,8 @@
 | 开发环境反复提示数据库 WAL 更新但无代码变化 | 更新宿主项目后重启 `dotnet watch`；`data/**` 已排除监听，不要删除 WAL。用 `dotnet watch --project src/SData/SData.csproj --list` 确认不含数据目录 |
 | 写入后查询无数据 | 缓冲 ~200ms 才落库；确认 `/metrics` 的 `sdata_ingest_processed_total` 是否增长 |
 | 查询报 "Only SELECT/WITH queries are allowed" | 分析通道只允许单条只读查询；SQL 字面量中不要出现写关键字（如注释含 DELETE 也会被拒） |
-| 内存吃紧 | 调低 `MemoryLimit`、`Threads`；确认 `preserve_insertion_order=false` 未被移除 |
+| `storage_memory` / Out of Memory | 先减少查询并发、线程和扫描范围，检查追踪内存及临时磁盘空间；默认 Threads=2/MaxConcurrentQueries=1。降低引擎内存配额会加重配额不足，不是通用修复；有宿主余量时才评估上调。`memory_limit` 不是进程总内存硬上限 |
+| `database_invalidated` / FATAL | 引擎已失效，普通重试不能恢复；保存日志并修正资源预算后协调重启，禁止删库/WAL、强行确认或绕过回执。重启前内存批次不持久，未确认消息依赖 broker 重投，允许重复 |
 | 查询大区间超时 | 区间超过 `MaxQueryDays` 会被拒绝；用聚合端点降采样 |
 | 磁盘不释放 | 保留策略每小时执行 DROP + CHECKPOINT；可手动 `CHECKPOINT` |
 | 冷层查询报 No files found | 现版本已修复（@STORE-COLD4）：台账为空时兜底通配先经 glob() 验存，零命中/端点不可达一律跳过冷层分支，本地天表查询不受空桶影响；若仍复现说明运行的是旧版本，升级后重启即可 |

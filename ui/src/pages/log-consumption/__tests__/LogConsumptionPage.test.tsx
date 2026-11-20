@@ -266,6 +266,32 @@ describe('LogConsumptionPage', () => {
     expect(screen.queryByText(/37\.733333/)).toBeNull();
   });
 
+  it('shows an active writer failure as an alert', async () => {
+    vi.mocked(fetchMqConsumption).mockResolvedValueOnce({
+      sampledAt: '2026-11-20T08:26:00Z', windowSeconds: 60, instances: [],
+      writerFailure: { code: 'storage_memory', reason: 'DuckDB 内存不足，批次保留重试', at: '2026-11-20T08:25:59Z', recoveredAt: null },
+    });
+    renderPage();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveClass('text-error');
+    expect(alert).toHaveTextContent('storage_memory');
+    expect(alert).toHaveTextContent('DuckDB 内存不足');
+  });
+
+  it('hides recovered persistence failures entirely', async () => {
+    vi.mocked(fetchMqConsumption).mockResolvedValueOnce({
+      sampledAt: '2026-11-20T08:27:25Z', windowSeconds: 60, instances: [],
+      writerFailure: { code: 'storage_memory', reason: 'DuckDB 内存不足，批次保留重试', at: '2026-11-20T08:25:59Z', recoveredAt: '2026-11-20T08:26:00Z' },
+    });
+    renderPage();
+    await screen.findByText('prod-kafka');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('storage_memory')).toBeNull();
+    expect(screen.queryByText('DuckDB 内存不足，批次保留重试')).toBeNull();
+    expect(screen.queryByText(/持久化已恢复|Persistence recovered/)).toBeNull();
+    expect(screen.queryByText(/最近失败|Recent failures/)).toBeNull();
+  });
+
   it('reports unavailable status instead of showing healthy zero rates', async () => {
     vi.mocked(fetchMqConsumption).mockRejectedValueOnce(new Error('offline'));
     renderPage();

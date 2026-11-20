@@ -4,6 +4,8 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @SET-S48 旧后端缺失内存配置不崩溃 | `SettingsPage.test.tsx` 缺字段/null、切页可用、重试恢复 | 2026-11-20：定向31/31、前端全量785/785、typecheck/lint通过；未重启运行后端或做浏览器复验 |
+| @SET-S45/S46/S47 内存调整、失败恢复与权限 | `SettingsTests.DuckDb*`、`DuckDbMemorySettingsTests`、`StoreInitializerTests`、`DuckDbSettingsIntegrationTests`、设置页/API测试 | 2026-11-20：Store全量293/293、末轮设置专项40/40（含恢复失败）、前端全量783/783、类型检查/lint通过；隔离真实HTTP测试1/1通过（401/403/非法容量/保存/查询/重启恢复）。默认构建被运行中SData锁DLL阻塞，改独立输出验证，未停止现有服务；未部署或浏览器验收 |
 | @SET-S43/S44 查看及重置 Key | ApiAgentTests、ApiKeySchemaTests、ApiKeyManagementIntegrationTests、ApiAgentsPanel.test.tsx | 2026-11-20：Store252/252、补列2/2、隔离JWT权限/无缓存1/1、前端定向24/24、类型检查和独立构建通过；前端全量730/731（日志消费页旧文案断言失败），Ingest整组被MqRuntimeTests缺FallbackState编译阻塞。未部署、未重置真实Key、浏览器未复验 |
 | @SET-S40 移除本机遥测提示块 | `SettingsPage.test.tsx`（提示块不存在、外部地址与 Header 保存保留） | 2026-11-20：设置页18/18、typecheck通过；仅移除展示，不改后端采集，未部署或浏览器复验 |
 | @SET-S42 消费重试及通知渠道 | `SettingsTests.MqAlerts_ValidateEnabledChannelsAndPersistRetrySettings`、消费页保存测试 | 设置专项1/1、前端消费专项24/24通过（2026-11-20）；假通知，无真实外发 |

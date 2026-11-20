@@ -18,7 +18,7 @@ interface SearchSidePanelProps {
   onDenoiseChange: (value: boolean) => void;
   filters: SearchFilter[];
   onFiltersChange: (filters: SearchFilter[]) => void;
-  /** 最近一次执行的时间窗（ISO，来自 searchedRange；未执行为 null，过滤器树待就绪后加载） */
+  /** 最近一次显式查询的时间窗（ISO；轮询保持不变，未执行为 null） */
   from: string | null;
   to: string | null;
 }

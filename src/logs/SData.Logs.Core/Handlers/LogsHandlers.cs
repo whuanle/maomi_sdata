@@ -34,11 +34,11 @@ public class QueryLogsCommandHandler : IRequestHandler<QueryLogsCommand, PagedRe
             Severity = request.Severity,
             Search = request.Search,
             Limit = pageSize,
+            Offset = (page - 1) * pageSize,
         }, cancellationToken);
 
-        // 按（页码-1）* 页大小跳过内存中的行（DuckDB 查询已按时间倒序 + limit 截断）
+        // 分页已下推到 DuckDB（LIMIT/OFFSET），无需再在内存跳过
         var items = records
-            .Skip((page - 1) * pageSize)
             .Select(record => new LogItem
             {
                 Timestamp = record.Timestamp,

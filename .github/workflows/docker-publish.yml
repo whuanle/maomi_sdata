@@ -1,6 +1,6 @@
 # 与 moai 共用密钥约定：docker 环境（或 Repository secrets）中的
 # DOCKERHUB_USERNAME / DOCKERHUB_TOKEN；镜像仓库默认 <账号>/sdata。
-name: docker-publish
+name: release
 
 'on':
   push:
@@ -14,13 +14,174 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: 校验版本
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          NUMBER='(0|[1-9][0-9]*)'
+          IDENTIFIER='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          SEMVER="^${NUMBER}\.${NUMBER}\.${NUMBER}(-${IDENTIFIER}(\.${IDENTIFIER})*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"
+          [[ "$VERSION" =~ $SEMVER && ${#VERSION} -le 128 ]] || { echo '::error::非法 SemVer tag'; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "${VERSION%%+*}" == *-* ]]; then
+            echo 'prerelease=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'prerelease=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  build-ui:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 验证打包和启动脚本
+        run: python -I tool/Release/test_release.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 构建主应用与探针
+        working-directory: ui
+        run: |
+          npm install --global pnpm@10 --no-audit --no-fund
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm exec vite build --outDir ../.artifacts/release-ui
+          pnpm exec vite build --config vite.probe.config.ts --outDir ../.artifacts/release-ui/rum
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ui
+          path: .artifacts/release-ui/
+          if-no-files-found: error
+          retention-days: 1
+
+  binaries:
+    needs: [version, build-ui]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            runner: windows-2022
+          - rid: linux-x64
+            runner: ubuntu-22.04
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+          - rid: osx-x64
+            runner: macos-15-intel
+          - rid: osx-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RID: ${{ matrix.rid }}
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-ui
+          path: .artifacts/release-ui
+      - name: 发布独立运行程序
+        run: |
+          # 单文件 + 原生库内嵌；实测 R2R/单文件压缩会让体积涨到 96MB 且启动变慢（解压开销），
+          # 故关闭二者，保留最优的 ~72MB / 2s 冷启动。不裁剪以规避反射框架的启动崩溃风险。
+          dotnet publish src/SData/SData.csproj -c Release -r "$RID" --self-contained true \
+            -p:UseAppHost=true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:EnableCompressionInSingleFile=false \
+            -p:PublishReadyToRun=false \
+            -p:PublishTrimmed=false \
+            -o .artifacts/publish --nologo
+      - name: 打包并检查隐私边界
+        run: |
+          python -I tool/Release/package.py --rid "$RID" --version "$VERSION" \
+            --publish .artifacts/publish --ui .artifacts/release-ui --output .artifacts/packages
+      - name: 验证最终压缩包
+        run: |
+          if [[ "$RID" == win-* ]]; then EXT=zip; else EXT=tar.gz; fi
+          python -I tool/Release/smoke.py --archive ".artifacts/packages/sdata-$VERSION-$RID.$EXT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.rid }}
+          path: |
+            .artifacts/packages/*.zip
+            .artifacts/packages/*.tar.gz
+            .artifacts/packages/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    needs: [version, binaries]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: packages
+      - name: 验证并汇总校验和
+        working-directory: packages
+        run: |
+          set -euo pipefail
+          [[ "$(find . -maxdepth 1 -name '*.sha256' | wc -l)" -eq 5 ]]
+          cat *.sha256 | sort -k2 > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+      - name: 创建或更新 Release
+        working-directory: packages
+        run: |
+          set -euo pipefail
+          # 先以 draft 上传全部资产，只有五个平台都成功才公开。
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" ./*.zip ./*.tar.gz SHA256SUMS.txt --clobber
+          if [[ "$PRERELEASE" == true ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          fi
+
   build-and-push:
+    needs: version
     runs-on: ubuntu-latest
     environment: docker
     timeout-minutes: 60
     env:
       IMAGE_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || secrets.DOCKERHUB_USERNAME }}
       IMAGE_REPO: ${{ vars.DOCKERHUB_REPO || 'sdata' }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
     defaults:
       run:
         shell: bash
@@ -47,11 +208,9 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          # 接受 X.Y.Z / vX.Y.Z，可带预发布与构建元数据；元数据不进入 Docker tag。
-          NUMBER='(0|[1-9][0-9]*)'
-          IDENTIFIER='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
-          SEMVER="^${NUMBER}\.${NUMBER}\.${NUMBER}(-${IDENTIFIER}(\.${IDENTIFIER})*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"
+          VERSION="${RELEASE_VERSION%%+*}"
+          # SemVer 已由 version job 验证，Docker 标签只移除构建元数据。
+          SEMVER='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
           if [[ ! "$VERSION" =~ $SEMVER ]]; then
             echo "::error::tag 必须为 X.Y.Z / vX.Y.Z，可带 -rc.1 或 +build.7"
             exit 1

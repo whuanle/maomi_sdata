@@ -4,6 +4,9 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| GC 分代回收次数指标 | `/metrics` 的 `sdata_gc_collection_count_total{generation}`、`ResourceSnapshot.GcCollectionCount0/1/2` | 2026-11-20：随宿主 Release 编译通过；Monitor 21 通过 1 平台跳过；与 OTel Runtime 标准 GC 指标互补 |
+| 总览/状态今日行数批量统计 | `QueryOverviewCommandHandlerTests`（`StubStoreInfo.CountTablesAsync`）、Monitor 全量 | 2026-11-20：Monitor 21 通过 1 平台跳过；七域/四域 count 合并为单条查询，输出与逐表统计一致 |
+| @MON-S8 持久化恢复后隐藏提示 | `LogConsumptionPage.test.tsx`：未恢复仍告警，已恢复整块提示及原因完全不渲染 | 2026-11-20：本轮消费页17/17、类型检查通过；前轮前端全量773/773，本轮未重跑全量或做浏览器/部署验收 |
 | @MON-MQ1 消费运行态 | `tool/MqProducer/verify.py` 真实三类消费者 | 三实例 consuming、计数增长，服务重启归零后恢复；浏览器消费页已确认同一快照（2026-11-18） |
 | @MON-S1 服务状态详情 | 既有 xunit（宿主运行验证）+ `/api/monitor/status` 手工核对 | 2026-11-15 既有实现回归绿 |
 | @MON-O1 总览聚合通道健康 | `tests/SData.Monitor.Tests/QueryOverviewCommandHandlerTests.Handle_AggregatesChannelsTodayRowsAndStorage` | 2026-11-18 ✓ Monitor 5/5 |

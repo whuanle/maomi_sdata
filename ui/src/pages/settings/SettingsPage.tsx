@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
-import { Cloud, History, Package, RefreshCw, Send, Trash2, Users } from 'lucide-react';
+import { Cloud, Database, History, Package, RefreshCw, Send, Trash2, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useForm } from 'react-hook-form';
 import {
   fetchSettings,
   saveCompressionSettings,
+  saveDuckDbSettings,
   saveOtlpSettings,
   saveRetentionSettings,
   saveS3Settings,
@@ -14,6 +15,7 @@ import {
 } from '@/api/settings';
 import type {
   CompressionSettings,
+  DuckDbSettings,
   OtlpSettings,
   SaveOtlpSettings,
   RetentionSettings,
@@ -42,8 +44,8 @@ import { ApiAgentsPanel } from './ApiAgentsPanel';
 import { NotificationChannelsPanel } from './NotificationChannelsPanel';
 
 /** 合法 tab key（members 全员可见；其余仅管理员；MQ 日志源已独立为「日志消费」页）. */
-const TAB_KEYS = ['members', 's3', 'retention', 'compression', 'otlp', 'notifications', 'agents'] as const;
-const ADMIN_ONLY_TABS = new Set<string>(['s3', 'retention', 'compression', 'otlp', 'notifications', 'agents']);
+const TAB_KEYS = ['members', 'duckdb', 's3', 'retention', 'compression', 'otlp', 'notifications', 'agents'] as const;
+const ADMIN_ONLY_TABS = new Set<string>(['duckdb', 's3', 'retention', 'compression', 'otlp', 'notifications', 'agents']);
 
 /** 系统设置页：顶部 tab 导航（成员全员可见 + 管理员设置 tab：通知渠道/S3 冷存储/三段保留/数据压缩/OTLP）；后端授权是权威. */
 export function SettingsPage() {
@@ -103,6 +105,10 @@ export function SettingsPage() {
                 <Send className="size-3.5" aria-hidden />
                 {t('notifications.tab')}
               </TabsTrigger>
+              <TabsTrigger value="duckdb" className="inline-flex items-center gap-1.5">
+                <Database className="size-3.5" aria-hidden />
+                {t('settings.tabDuckDb')}
+              </TabsTrigger>
               <TabsTrigger value="s3" className="inline-flex items-center gap-1.5">
                 <Cloud className="size-3.5" aria-hidden />
                 {t('settings.tabS3')}
@@ -147,6 +153,16 @@ export function SettingsPage() {
 
         {viewerIsAdmin && settings && (
           <>
+            <TabsContent value="duckdb">
+              {settings.duckDb && typeof settings.duckDb.memoryLimit === 'string' && typeof settings.duckDb.effectiveMemoryLimit === 'string' ? (
+                <DuckDbCard initial={settings.duckDb} onSaved={(duckDb) => setSettings((current) => current ? { ...current, duckDb } : current)} />
+              ) : (
+                <FormCard title={t('settings.duckDbTitle')} testId="duckdb-unavailable">
+                  <p role="alert" className="text-sm text-muted">{t('settings.duckDbUnavailable')}</p>
+                  <Button className="mt-3" variant="link" size="sm" icon={<RefreshCw className="size-3.5" />} onClick={() => void loadSettings()}>{t('settings.retry')}</Button>
+                </FormCard>
+              )}
+            </TabsContent>
             <TabsContent value="s3">
               <S3SettingsCard initial={settings.s3} onSaved={updateS3} onSaveFailed={loadSettings} />
               {s3Enabled && (
@@ -185,6 +201,49 @@ function FormCard({ title, hint, children, testId }: { title: string; hint?: str
 /** 表单错误消息（ApiError.message 为后端人类可读中文）. */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 前后端使用同一容量格式与安全整数上限. */
+function validMemoryLimit(value: string) {
+  if (value.length > 40) return false;
+  const match = value.trim().match(/^([0-9]{1,16}(?:\.[0-9]{1,6})?)\s*(MB|GB|MiB|GiB)$/i);
+  if (!match) return false;
+  const multiplier = { MB: 1_000_000, GB: 1_000_000_000, MIB: 1_048_576, GIB: 1_073_741_824 }[match[2].toUpperCase()]!;
+  const bytes = Number(match[1]) * multiplier;
+  return bytes >= 1 && bytes <= Number.MAX_SAFE_INTEGER;
+}
+
+/** DuckDB 实例内存设置，独立于其它存储设置. */
+function DuckDbCard({ initial, onSaved }: { initial: DuckDbSettings; onSaved: (settings: DuckDbSettings) => void }) {
+  const { t } = useTranslation();
+  const [pending, setPending] = useState(false);
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<Pick<DuckDbSettings, 'memoryLimit'>>({
+    defaultValues: { memoryLimit: initial.memoryLimit },
+  });
+  const submit = handleSubmit(async (values) => {
+    setPending(true);
+    try {
+      const saved = await saveDuckDbSettings({ memoryLimit: values.memoryLimit.trim() });
+      reset({ memoryLimit: saved.memoryLimit });
+      onSaved(saved);
+      toast.success(t('settings.duckDbSaved'));
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setPending(false);
+    }
+  });
+  return (
+    <FormCard title={t('settings.duckDbTitle')} hint={t('settings.duckDbHint')} testId="duckdb-settings">
+      <p className="mb-3 text-xs text-muted">{t('settings.duckDbEffective')}: <span className="font-mono text-fg">{initial.effectiveMemoryLimit}</span></p>
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <Field label={t('settings.duckDbMemoryLimit')} required error={errors.memoryLimit?.message} help={t('settings.duckDbUnits')} htmlFor="duckdb-memory-limit">
+          <Input id="duckdb-memory-limit" {...register('memoryLimit', { validate: (value) => validMemoryLimit(value) || t('settings.duckDbInvalid') })} placeholder="2GB" className="font-mono" />
+        </Field>
+        <div><Button type="submit" icon={<Database className="size-3.5" />} loading={pending}>{t('common.save')}</Button></div>
+      </form>
+    </FormCard>
+  );
 }
 
 /** S3 表单值 → 保存/测试载荷（enabled=false = 关闭冷层只清 endpoint；掩码/空密钥 = 沿用已存值）. */

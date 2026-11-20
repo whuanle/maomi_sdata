@@ -10,6 +10,9 @@ public class SettingsResponse
     /// <summary>S3 冷存储（SecretKey 掩码）.</summary>
     public S3SettingsModel S3 { get; set; } = new();
 
+    /// <summary>DuckDB 内存配置与当前生效值.</summary>
+    public DuckDbSettingsResponse DuckDb { get; set; } = new();
+
     /// <summary>三段保留（5 域热/冷天数）.</summary>
     public RetentionPlanOptions Retention { get; set; } = new();
 

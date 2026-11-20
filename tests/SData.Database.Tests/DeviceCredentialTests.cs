@@ -68,6 +68,7 @@ public class DeviceCredentialTests : IDisposable
     private sealed class AuthSettings : ISystemSettingsProvider
     {
         public MqttAuthOptions GetMqttAuth() => new();
+        public DuckDbSettings GetDuckDb() => new();
         public S3Options GetS3() => new();
         public RetentionPlanOptions GetRetention() => new();
         public CompressionOptions GetCompression() => new();

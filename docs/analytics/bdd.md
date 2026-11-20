@@ -4,6 +4,19 @@
 
 Feature: 只读分析查询
 
+  @ANALYTICS-S225 @auto:xunit
+  Scenario: 大结果在执行层受限而不是返回后截取
+    Given 查询可能生成大量宽记录且实例内存有限
+    When 只请求少量结果并重复执行
+    Then 仅生成受限结果并准确提示截断，排序和绑定参数不变且连接可继续使用
+
+  @ANALYTICS-S226 @auto:xunit
+  Scenario: 查询超时终止原生计算
+    Given 查询正在等待名额或进行耗时计算
+    When 超出执行预算或调用方取消
+    Then 终止等待或数据库工作并释放资源，后续查询仍可执行
+
+
   @ANALYTICS-S220 @manual
   Scenario: 从完整搜索条件创建告警
     Given 搜索包含侧栏过滤和降噪条件
@@ -210,6 +223,20 @@ Feature: 只读分析查询
     When 将界面语言切换为英语
     Then 对应入口显示为 Dashboards 和 Client Sessions
 
+  @ANALYTICS-S221 @manual
+  Scenario: 定时刷新不打断筛选浏览
+    Given 用户已打开属性筛选并展开节点和输入搜索词
+    When 搜索结果按设定间隔自动刷新
+    Then 结果和直方图在新数据到达后更新，筛选节点、搜索词、焦点和侧栏滚动位置保持不变
+    Then 手动运行或切换时间范围和数据源后，筛选候选使用新的查询范围
+
+  @ANALYTICS-S222 @manual
+  Scenario: 后台刷新失败或缓慢时仍可查看已有结果
+    Given 用户已查询到搜索结果并开启自动刷新
+    When 后台刷新尚未结束或发生失败
+    Then 不重复叠加定时查询，失败时保留已有结果并提示原因
+    Then 手动查询仍可立即运行，旧后台响应不覆盖新查询结果
+
   @ANALYTICS-S18 @manual
   Scenario: 搜索列表触底续页与结束
     Given 已成功查询日志或链路
@@ -298,6 +325,18 @@ Feature: 只读分析查询
   Scenario: 缺失命名参数拒绝
     When SQL 引用 $p0 但 parameters 未提供该键（或区间内无天表短路之外的缺失场景）
     Then 返回 400「缺少查询参数 $p0」，SQL 不执行
+
+  @ANALYTICS-S223 @manual
+  Scenario: 侧栏筛选同步到可编辑搜索条件
+    Given 用户已输入手写搜索条件
+    When 在侧栏勾选多个值、取消、排除、仅保留某值或删除筛选
+    Then 搜索框即时展示完整条件并保留手写分组，同字段多值为任选其一，不额外运行查询且运行后每个条件只生效一次
+
+  @ANALYTICS-S224 @manual
+  Scenario: 修改自动条件并恢复既有搜索
+    Given 用户通过旧分享地址或保存的搜索恢复了侧栏筛选
+    When 在搜索框修改或删除自动填入的条件
+    Then 修改后的文本生效且旧筛选不再隐藏生效，未改写的筛选保持勾选，语法切换和链路跳转仍展示相同有效条件
 
   @ANALYTICS-S183 @manual
   Scenario: 搜索语法说明与智能提示并存

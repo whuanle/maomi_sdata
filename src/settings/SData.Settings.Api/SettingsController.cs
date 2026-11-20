@@ -96,6 +96,11 @@ public class SettingsController : ControllerBase
         return await _mediator.Send(new QuerySettingsCommand(), cancellationToken);
     }
 
+    /// <summary>保存 DuckDB 内存限制（立即生效）.</summary>
+    [HttpPut("duckdb")]
+    public Task<DuckDbSettingsResponse> SaveDuckDb([FromBody] SaveDuckDbSettingsCommand command, CancellationToken cancellationToken)
+        => _mediator.Send(command, cancellationToken);
+
     /// <summary>
     /// 保存 S3 冷存储设置（立即重建 SECRET，立即生效）.
     /// </summary>

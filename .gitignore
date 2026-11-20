@@ -464,3 +464,6 @@ id_ed25519
 *.duckdb.wal
 *.bundle
 
+# 发布工具源码不是构建输出 Release 目录
+!/tool/Release/
+

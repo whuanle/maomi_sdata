@@ -49,6 +49,20 @@ public class SystemSettingsProvider : ISystemSettingsProvider
     public S3Options GetS3() => Get(SettingKeys.S3, _systemOptions.S3);
 
     /// <inheritdoc/>
+    public DuckDbSettings GetDuckDb()
+    {
+        var fallback = new DuckDbSettings { MemoryLimit = _systemOptions.DuckDb.MemoryLimit };
+        var settings = Get(SettingKeys.DuckDb, fallback);
+        if (DuckDbMemoryLimit.TryNormalize(settings.MemoryLimit, out var normalized))
+        {
+            return new DuckDbSettings { MemoryLimit = normalized };
+        }
+
+        _logger.LogWarning("设置 {Key} 的内存限制无效，回退文件配置", SettingKeys.DuckDb);
+        return fallback;
+    }
+
+    /// <inheritdoc/>
     public RetentionPlanOptions GetRetention() => Get(SettingKeys.Retention, _systemOptions.Retention);
 
     /// <inheritdoc/>

@@ -180,6 +180,7 @@ public class DeviceCredentialCheckerTests
     {
         public MqttAuthOptions Auth { get; set; } = new();
         public MqttAuthOptions GetMqttAuth() => Auth;
+        public DuckDbSettings GetDuckDb() => new();
         public S3Options GetS3() => new();
         public RetentionPlanOptions GetRetention() => new();
         public CompressionOptions GetCompression() => new();

@@ -85,6 +85,7 @@ public class IngestWriterService : BackgroundService
                         catch (Exception exception)
                         {
                             _buffer.WriterFailed(exception);
+                            _connectionManager.LogResourceFailure(exception, "ingest");
                             _logger.LogError(exception, "Ingest writer retains failed batch for retry");
                             await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                         }
@@ -113,15 +114,18 @@ public class IngestWriterService : BackgroundService
     /// <returns>Task.</returns>
     internal async Task FlushAsync(List<IngestItem> batch, CancellationToken cancellationToken)
     {
-        // 按（类型，天）分组
+        // 按（类型，天）分组；同一类型同一天复用表名，避免每条记录重复拼接字符串
         var groups = new Dictionary<(IngestKind Kind, string Table), List<object>>();
-        var days = new HashSet<DateTimeOffset>();
+        var tableNames = new Dictionary<(IngestKind Kind, DateOnly Day), string>();
         foreach (var item in batch)
         {
             var time = GetTimestamp(item.Kind, item.Record);
-            var day = new DateTimeOffset(time.UtcDateTime.Date, TimeSpan.Zero);
-            days.Add(day);
-            var table = TimeTables.Name(Prefix(item.Kind), time);
+            var day = DateOnly.FromDateTime(time.UtcDateTime);
+            if (!tableNames.TryGetValue((item.Kind, day), out var table))
+            {
+                table = TimeTables.Name(Prefix(item.Kind), time);
+                tableNames[(item.Kind, day)] = table;
+            }
             var key = (item.Kind, table);
             if (!groups.TryGetValue(key, out var list))
             {
@@ -147,6 +151,7 @@ public class IngestWriterService : BackgroundService
                 await _connectionManager.EnsureDayTablesAsync(prefix, kindDays, cancellationToken);
             }
 
+            using var writeLease = await _connectionManager.LockWriteAsync(cancellationToken);
             using var connection = _connectionManager.CloneConnection();
             using var transaction = connection.BeginTransaction();
             foreach (var group in groups)
@@ -172,18 +177,9 @@ public class IngestWriterService : BackgroundService
     private async Task AppendAsync(DuckDBConnection connection, IngestKind kind, string table, List<object> records, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var logColumns = new List<string>();
-        if (kind == IngestKind.Log)
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT column_name FROM information_schema.columns WHERE table_name = $table ORDER BY ordinal_position";
-            command.Parameters.Add(new DuckDBParameter("table", table));
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                logColumns.Add(reader.GetString(0));
-            }
-        }
+        var logColumns = kind == IngestKind.Log
+            ? await _connectionManager.GetLogColumnsAsync(connection, table, cancellationToken)
+            : Array.Empty<string>();
 
         using var appender = connection.CreateAppender(table);
 

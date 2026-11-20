@@ -894,6 +894,60 @@ public partial class AnalyticsSearchSqlTests(global::Xunit.Abstractions.ITestOut
     }
 
     [Fact]
+    public async Task ResultLimit_IsAppliedBeforeMaterializingWideResults()
+    {
+        using var harness = new SearchHarness(options => options.DuckDb.MemoryLimit = "128MB");
+        for (var iteration = 0; iteration < 5; iteration++)
+        {
+            var result = await harness.Executor.ExecuteAsync("SELECT i, repeat(md5(i::VARCHAR), 32) AS payload FROM range(500000) r(i)", 2);
+            Assert.Equal(2, result.Rows.Count);
+            Assert.True(result.Truncated);
+            Assert.Equal(1024, Assert.IsType<string>(result.Rows[0][1]).Length);
+            Assert.Single((await harness.Executor.ExecuteAsync("SELECT 42")).Rows);
+        }
+    }
+
+    [Fact]
+    public async Task ResultLimit_PreservesCteOrderingAndInternalParameterCollision()
+    {
+        using var harness = new SearchHarness();
+        var result = await harness.Executor.ExecuteSearchAsync(
+            "WITH rows AS (SELECT i FROM range(10) r(i)) SELECT i + $sdata_result_limit AS value FROM rows ORDER BY i DESC -- trailing note",
+            DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow, 3,
+            new Dictionary<string, object?> { ["sdata_result_limit"] = 100 });
+        Assert.Equal(new long[] { 109, 108, 107 }, result.Rows.Select(row => Convert.ToInt64(row[0])));
+        Assert.True(result.Truncated);
+        var exact = await harness.Executor.ExecuteAsync("SELECT i FROM range(3) r(i)", 3);
+        Assert.False(exact.Truncated);
+    }
+
+    [Fact]
+    public async Task QueryBudget_InterruptsNativeWork_AndReleasesPermit()
+    {
+        using var harness = new SearchHarness(options => options.DuckDb.QueryTimeoutSeconds = 1);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var failure = await Assert.ThrowsAsync<BusinessException>(() => harness.Executor.ExecuteAsync(
+            "SELECT sum(sin(a.range + b.range)) FROM range(1000000) a CROSS JOIN range(1000000) b").WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(408, failure.StatusCode);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10));
+        Assert.Single((await harness.Executor.ExecuteAsync("SELECT 42").WaitAsync(TimeSpan.FromSeconds(5))).Rows);
+    }
+
+    [Fact]
+    public async Task QueryBudget_IncludesAdmissionWait_AndHonorsCallerCancellation()
+    {
+        using var harness = new SearchHarness(options => options.DuckDb.QueryTimeoutSeconds = 1);
+        using var lease = await harness.Manager.LockQueryAsync(CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<BusinessException>(() => harness.Executor.ExecuteAsync("SELECT 42"));
+        Assert.Equal(408, failure.StatusCode);
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => harness.Executor.ExecuteAsync("SELECT 42", cancellationToken: stop.Token));
+        lease.Dispose();
+        Assert.Single((await harness.Executor.ExecuteAsync("SELECT 42")).Rows);
+    }
+
+    [Fact]
     public async Task AlertCount_HalfOpenWindow_CapsAndBinds()
     {
         using var harness = new SearchHarness();

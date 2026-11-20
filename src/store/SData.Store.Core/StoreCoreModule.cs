@@ -29,6 +29,7 @@ public class StoreCoreModule : IModule
     public void ConfigureServices(ServiceContext context)
     {
         context.Services.AddSingleton<DuckDbConnectionManager>();
+        context.Services.AddSingleton<IDuckDbRuntimeSettings>(sp => sp.GetRequiredService<DuckDbConnectionManager>());
         context.Services.AddSingleton<DuckDbSchemaBootstrapper>();
         context.Services.AddSingleton<IngestBuffer>();
         context.Services.AddSingleton<SData.Store.IIngestBuffer>(sp => sp.GetRequiredService<IngestBuffer>());
@@ -92,7 +93,7 @@ public class StoreInitializer : IHostedService
     /// <inheritdoc/>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        await _connectionManager.InitializeAsync(cancellationToken);
+        await _connectionManager.InitializeAsync(cancellationToken, _settingsProvider.GetDuckDb().MemoryLimit);
         await _bootstrapper.ApplyAsync(cancellationToken);
 
         // 冷启动重建设置页持久化的 S3 SECRET：DuckDB SECRET 是连接实例内存态，重启即失，

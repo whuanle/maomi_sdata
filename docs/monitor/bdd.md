@@ -4,6 +4,13 @@
 
 Feature: 服务状态与总览聚合
 
+  @MON-S8 @auto:e2e
+  Scenario: 共享持久化故障恢复后不再显示提示
+    Given 共享写入器曾发生失败且后续批次已提交
+    When 管理员查看日志消费状态
+    Then 不显示已恢复故障的提示、原因和时间，只有仍未恢复的持久化故障显示告警
+
+
   @MON-MQ7 @auto:xunit
   Scenario: 立即重试消费实例需要确认
     Given 消费实例出现失败并等待自动重试

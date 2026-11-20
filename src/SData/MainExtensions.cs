@@ -2,6 +2,8 @@ using Maomi;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
+using Serilog.Configuration;
+using Serilog.Settings.Configuration;
 using SData.Infra;
 using SData.Infra.Configuration;
 
@@ -31,8 +33,13 @@ public static class MainExtensions
 
         builder.Services.AddSerilog((services, loggerConfiguration) =>
         {
+            // 单文件发布下 Serilog 无法靠扫描磁盘目录发现 sink 程序集，需显式声明，
+            // 否则 ReadFrom.Configuration 抛 "no Serilog:Using ... published as single-file"。
+            var sinkOptions = new ConfigurationReaderOptions(
+                typeof(ConsoleLoggerConfigurationExtensions).Assembly,
+                typeof(FileLoggerConfigurationExtensions).Assembly);
             loggerConfiguration
-                .ReadFrom.Configuration(builder.Configuration)
+                .ReadFrom.Configuration(builder.Configuration, sinkOptions)
                 .ReadFrom.Services(services)
                 .Enrich.FromLogContext();
         });

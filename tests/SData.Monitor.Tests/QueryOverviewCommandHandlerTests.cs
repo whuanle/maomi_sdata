@@ -37,7 +37,7 @@ public class QueryOverviewCommandHandlerTests
             DuckDb = new DuckDbOptions { Path = "data/overview-test.duckdb", MemoryLimit = "1GB" },
         };
 
-        var handler = new QueryOverviewCommandHandler(buffer, storeInfo, options, new StubSettings(), new StubMetrics());
+        var handler = new QueryOverviewCommandHandler(buffer, storeInfo, options, new StubSettings(), new StubMetrics(), new StubDuckDb());
         var response = await handler.Handle(new QueryOverviewCommand(), CancellationToken.None);
 
         // 今日量：logs 今日表 42，traces 今日表不存在为 0
@@ -56,7 +56,7 @@ public class QueryOverviewCommandHandlerTests
         Assert.False(rumEventChannel.Healthy);
 
         // 存储用量：配置路径与内存上限透传；文件不存在时字节为 0
-        Assert.Equal("1GB", response.Storage.MemoryLimit);
+        Assert.Equal("1.8 GiB", response.Storage.MemoryLimit);
         Assert.Equal("data/overview-test.duckdb", response.Storage.HotDbPath);
         Assert.Equal(0, response.Storage.HotDbBytes);
         Assert.False(response.Storage.ColdEnabled);
@@ -83,7 +83,7 @@ public class QueryOverviewCommandHandlerTests
         var buffer = new StubBuffer();
         buffer.Stats.Buffered["log"] = 9;
         buffer.Stats.Buffered["trace"] = 9;
-        var handler = new QueryOverviewCommandHandler(buffer, new StubStoreInfo(new()), new SystemOptions(), settings, new StubMetrics());
+        var handler = new QueryOverviewCommandHandler(buffer, new StubStoreInfo(new()), new SystemOptions(), settings, new StubMetrics(), new StubDuckDb());
 
         var response = await handler.Handle(new QueryOverviewCommand(), CancellationToken.None);
 
@@ -114,7 +114,7 @@ public class QueryOverviewCommandHandlerTests
     public async Task Handle_IncompleteS3ConfigurationIsNotEnabled(string endpoint, string bucket)
     {
         var settings = new StubSettings { S3 = new S3Options { Endpoint = endpoint, Bucket = bucket } };
-        var handler = new QueryOverviewCommandHandler(new StubBuffer(), new StubStoreInfo(new()), new SystemOptions(), settings, new StubMetrics());
+        var handler = new QueryOverviewCommandHandler(new StubBuffer(), new StubStoreInfo(new()), new SystemOptions(), settings, new StubMetrics(), new StubDuckDb());
         var response = await handler.Handle(new QueryOverviewCommand(), CancellationToken.None);
         Assert.False(response.Storage.ColdEnabled);
         Assert.Empty(response.MqConsumers);
@@ -124,12 +124,20 @@ public class QueryOverviewCommandHandlerTests
     {
         public S3Options S3 { get; set; } = new();
         public List<MqInstanceOptions> Instances { get; set; } = new();
+        public DuckDbSettings GetDuckDb() => new();
         public S3Options GetS3() => S3;
         public List<MqInstanceOptions> GetMqInstances() => Instances;
         public RetentionPlanOptions GetRetention() => new();
         public CompressionOptions GetCompression() => new();
         public OtlpOptions GetOtlp() => new();
         public Task SaveAsync(string key, string json, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class StubDuckDb : IDuckDbRuntimeSettings
+    {
+        public string MemoryLimit => "2GB";
+        public string EffectiveMemoryLimit => "1.8 GiB";
+        public Task ApplyMemoryLimitAsync(string memoryLimit, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class StubMetrics : IStorageMetrics
@@ -171,6 +179,16 @@ public class QueryOverviewCommandHandlerTests
         public Task<long> CountTableAsync(string tableName, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Counts.GetValueOrDefault(tableName));
+        }
+
+        public Task<IReadOnlyDictionary<string, long>> CountTablesAsync(IReadOnlyList<(string Name, string TableName)> tables, CancellationToken cancellationToken = default)
+        {
+            var result = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (var (name, table) in tables)
+            {
+                result[name] = Counts.GetValueOrDefault(table);
+            }
+            return Task.FromResult<IReadOnlyDictionary<string, long>>(result);
         }
 
         public IReadOnlyList<string> GetTableNames(string prefix)

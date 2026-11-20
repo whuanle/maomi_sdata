@@ -39,7 +39,11 @@ export function ConsumptionStatus({ instances, runtime, failed, sampledAt, error
         {sampledAt && <span>{t('settings.mqSampledAt')}: {formatDateTime(sampledAt)}</span>}
       </div>
       {failed && <div role="alert" className="space-y-2 rounded-md bg-error-soft p-3 text-sm text-error"><div>{t('settings.mqStatusStale')}</div>{error && <div className="font-mono text-xs">{t('settings.mqRequestError.' + error.code)}{error.status ? ` · HTTP ${error.status}` : ''} · {formatDateTime(error.at)}</div>}<Button variant="link" size="sm" onClick={onRetry}>{t('common.retry')}</Button></div>}
-      {writerFailure && <div className="rounded-md border border-error/30 bg-error-soft p-3 text-xs text-error"><div>{t('settings.mqStage.persist')} · <span className="font-mono">{writerFailure.code}</span></div><div>{writerFailure.reason}</div><div className="font-mono">{formatDateTime(writerFailure.at)}{writerFailure.recoveredAt ? ` · ${t('settings.mqRecovered')}: ${formatDateTime(writerFailure.recoveredAt)}` : ''}</div></div>}
+      {writerFailure && !writerFailure.recoveredAt && <div role="alert" className="rounded-md border border-error/30 bg-error-soft p-3 text-xs text-error">
+        <div>{t('settings.mqStage.persist')} · <span className="font-mono">{writerFailure.code}</span></div>
+        <div>{writerFailure.reason}</div>
+        <div className="font-mono">{formatDateTime(writerFailure.at)}</div>
+      </div>}
       {!instances.length && <Empty description={t('settings.mqNoInstances')} />}
       {instances.map(instance => {
         const item = runtime.find(x => x.instanceId === instance.id);

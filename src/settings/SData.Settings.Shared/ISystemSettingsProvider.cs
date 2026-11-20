@@ -13,6 +13,9 @@ public static class SettingKeys
     /// <summary>三段保留（RetentionPlanOptions）.</summary>
     public const string Retention = "system:retention";
 
+    /// <summary>DuckDB 内存限制（DuckDbSettings）.</summary>
+    public const string DuckDb = "system:duckdb";
+
     /// <summary>数据压缩（CompressionOptions）.</summary>
     public const string Compression = "system:compression";
 
@@ -45,6 +48,9 @@ public interface ISystemSettingsProvider
     /// </summary>
     /// <returns>合并后的 S3 配置.</returns>
     S3Options GetS3();
+
+    /// <summary>DuckDB 内存限制合并配置.</summary>
+    DuckDbSettings GetDuckDb();
 
     /// <summary>
     /// 三段保留合并配置.

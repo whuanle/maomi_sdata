@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using DuckDB.NET.Data;
 using SData.Infra.Configuration;
 using SData.Store.Models;
 
@@ -76,10 +77,38 @@ public class IngestBuffer : IIngestBuffer
 
     public void WriterFailed(Exception exception)
     {
-        var code = exception is IOException ? "storage_io" : "batch_write_failed";
-        Volatile.Write(ref _writerFailure, new IngestWriterFailure(code,
-            code == "storage_io" ? "存储读写失败，请检查磁盘空间与权限" : "DuckDB 批量提交失败，批次保留重试，请检查服务日志",
-            DateTimeOffset.UtcNow, null));
+        var (code, reason) = ClassifyFailure(exception);
+        Volatile.Write(ref _writerFailure, new IngestWriterFailure(code, reason, DateTimeOffset.UtcNow, null));
+    }
+
+    private static (string Code, string Reason) ClassifyFailure(Exception exception)
+    {
+        var failures = new List<Exception>();
+        for (Exception? current = exception; current != null; current = current.InnerException)
+        {
+            failures.Add(current);
+        }
+
+        if (failures.OfType<DuckDBException>().Any(error =>
+            error.Message.Contains("database has been invalidated", StringComparison.OrdinalIgnoreCase)
+            || error.Message.Contains("FATAL", StringComparison.OrdinalIgnoreCase)))
+        {
+            return ("database_invalidated", "DuckDB 已失效，无法继续落库；请检查服务日志并重启服务，未提交消息不会确认");
+        }
+
+        if (failures.Any(error => error is OutOfMemoryException
+            || error is DuckDBException && error.Message.Contains("Out of Memory", StringComparison.OrdinalIgnoreCase)))
+        {
+            return ("storage_memory", "DuckDB 内存不足，批次保留重试；请降低查询并发和线程数，并检查内存配额及临时磁盘空间");
+        }
+
+        if (failures.Any(error => error is IOException
+            || error is DuckDBException && error.Message.Contains("IO Error", StringComparison.OrdinalIgnoreCase)))
+        {
+            return ("storage_io", "存储读写失败，请检查磁盘空间与权限");
+        }
+
+        return ("batch_write_failed", "DuckDB 批量提交失败，批次保留重试，请检查服务日志");
     }
 
     public void WriterRecovered()

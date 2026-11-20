@@ -47,6 +47,7 @@ public class LogStore : ILogStore
             new("start", ToDb(start)),
             new("end", ToDb(end)),
             new("limit", Math.Clamp(query.Limit, 1, 1000)),
+            new("offset", Math.Max(0, query.Offset)),
         };
 
         var where = new List<string>();
@@ -82,7 +83,7 @@ public class LogStore : ILogStore
         }
 
         var whereClause = where.Count > 0 ? " WHERE " + string.Join(" AND ", where) : string.Empty;
-        var sql = $"SELECT ts, service, severity, body, trace_id, span_id, attributes, resource, source FROM ({union}){whereClause} ORDER BY ts DESC LIMIT $limit";
+        var sql = $"SELECT ts, service, severity, body, trace_id, span_id, attributes, resource, source FROM ({union}){whereClause} ORDER BY ts DESC LIMIT $limit OFFSET $offset";
 
         return await _connectionManager.QueryAsync(sql, parameters, async reader =>
         {

@@ -6,6 +6,14 @@
 
 系统设置页（`/settings`，管理员）：把原本只能改 `configs/system.yaml` + 重启的运行参数（S3 冷存储、三段保留、数据压缩、OTLP 导出）搬到 UI，按功能卡片组织；S3/保留/压缩**立即生效**，OTLP **重启生效**。MQ 日志源最初为设置页一个 tab，2026-11-16 起迁出为独立「日志消费」页（`/log-consumption`）；2026-11-17 起升级为**多实例 + 每主题解析规则**（`system:mq` 键），保存后由消费管理器**自动热更新**（见 ingest 模块），仍归本模块管理配置读写。
 
+## DuckDB 内存
+
+- 管理员 `?tab=duckdb`，GET 合并视图含 `duckDb.memoryLimit/effectiveMemoryLimit`；PUT `/api/settings/duckdb` 仅接收 `memoryLimit`，保存 `system:duckdb`，不开放路径和线程。
+- 前端兼容旧版后端缺失/null的 `duckDb`：显示更新并重启后端及重试提示，不初始化表单、不伪造默认容量，其他页签仍可使用；重试获取新契约后恢复表单。
+- 容量支持正数 MB/GB/MiB/GiB（最多六位小数，1字节至安全整数上限）；MB/GB 十进制、MiB/GiB 二进制，拒绝无限制和非法历史覆盖，后者回退文件值。
+- `DuckDbSettingsService` 单例串行协调：运行应用并读回 → SQLite 保存；失败恢复旧运行参数，恢复失败返回明确503并记录严重日志。Shared 的 `IDuckDbRuntimeSettings` 由连接管理器实现，写门内参数绑定 SET，不重建实例。启动在 Schema 引导前应用合并值；保留文件默认不变。
+- 状态及总览读取实际运行快照，不增加轮询；资源面板沿用原15秒采样。限制不是整个进程的硬内存上限，调大需预留宿主/容器和其它组件资源，调小不保证RSS立即下降。
+
 ## API & Agents
 
 - 管理员独立页签 `?tab=agents`；GET/POST `/api/settings/api-keys` 管理具名接入与 Agent 凭据。创建/重置使用256位随机秘密，同时保存哈希、识别前缀及 Data Protection 密文。列表仅返回 canReveal 和审计；管理员显式 reveal 查看，沿用无缓存响应；查看不修改状态或更新时间。旧哈希记录须显式重置才可查看。
@@ -13,7 +21,7 @@
 
 ## 组件
 
-- **运行时设置通道** `SystemSettingsProvider`（Settings.Core，单例）：SQLite `setting` 表键值覆盖 + 文件 `SystemOptions` 回退（懒加载全表缓存，保存即刷新；脏 JSON/库不可用回退文件默认，不阻塞后台 tick）。键：`system:s3/retention/compression/mq/otlp`（值 = 选项类型 JSON；`system:kafka/rabbitmq/pulsar` 为旧单实例键，仅作合成回退）。契约 `ISystemSettingsProvider` 在 Settings.Shared，供 Store/Ingest 跨域引用（跨域仅引 Shared，符合分层）。
+- **运行时设置通道** `SystemSettingsProvider`（Settings.Core，单例）：SQLite `setting` 表键值覆盖 + 文件 `SystemOptions` 回退（懒加载全表缓存，保存即刷新；脏 JSON/库不可用回退文件默认，不阻塞后台 tick）。键：`system:duckdb/s3/retention/compression/mq/otlp`（值 = 选项类型 JSON；`system:kafka/rabbitmq/pulsar` 为旧单实例键，仅作合成回退）。契约 `ISystemSettingsProvider` 在 Settings.Shared，供 Store/Ingest 跨域引用（跨域仅引 Shared，符合分层）。
 - **MQ 实例配置** `GetMqInstances()`（读取顺序）：设置键 `system:mq`（`List<MqInstanceOptions>`，多实例主存储）> 文件 `SData:Mq:Instances` 节 > 旧 `system:kafka/rabbitmq/pulsar` 三键**内存合成**（`kafka-default` 等固定 id 1/2/3，仅 Enabled 且连接+topic 齐备才合成）；首次保存 `system:mq` 即完成迁移，旧键此后不再读取。选项类型 `MqInstanceOptions/MqTopicOptions/MqParserOptions` 在 Infra.Configuration.Shared（避免 Infra→Settings 循环引用）。
 - **设置 API** `SettingsController`（`/api/settings`，类级 `[Authorize(Roles = SDataRoles.Admin)]`）：GET 合并视图；PUT `s3/retention/compression/otlp`；POST `s3/test`；GET/PUT `mq-instances`（实例列表，全量替换，保存时新实例补雪花 id）；POST `mq-instances/parse-preview`（样例试解析，不落库）。CQRS 命令 + `IModelValidator`（天数 0–36500、codec 白名单、MQ 类型/格式白名单、Name 唯一、启用即连接必填、regex 可编译、csv 分隔符单字符）。旧 `PUT /settings/mq`（三键逐键保存）已随多实例改造移除。
 - **消费配置展示**：编辑侧栏按基本信息、连接、认证/发现、队列分区，长字段整行、窄屏单列；解析参数与样例测试可展开。列表分离运行态、连接摘要和队列行，名称后展示有效配置及默认值，沿用语义主题 token；只改变展示，不修改消费或保存契约。

@@ -49,7 +49,7 @@
 - 聚合：`epoch_ms(ts) // step * step` 分桶 + avg/sum/max/min/count/arg_max/quantile_cont。
 - 保留：`RetentionService` 每小时 DROP 过期天表 + `CHECKPOINT` 收缩 WAL；`Retention:{Logs,Traces,Metrics,Iot}`（天，0=永久）。
 - 初始化 DDL 内嵌于 `SData.Store.Core`（`DuckDb/Ddl/*.sql`，幂等），运行时由 Schema 引导执行；`tool/SchemaSync duck` 可手动补跑。
-- 运行参数（小内存）：`memory_limit=512MB`、`threads` 可配、`preserve_insertion_order=false`；查询跨度上限 `MaxQueryDays`。
+- 运行参数（小内存）：`memory_limit` 文件默认512MB，管理员可在系统设置 DuckDB 页签热调整并持久保存（详见 [设置设计](settings/sdd.md#duckdb-内存)）；`threads` 可配、`preserve_insertion_order=false`；查询跨度上限 `MaxQueryDays`。
 
 ## 写入路径
 

@@ -4,7 +4,7 @@ import dayjs from 'dayjs';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import i18n from '@/i18n';
 // jsdom 无 canvas，mock echarts 封装组件
-vi.mock('@/design-system/Chart', () => ({ Chart: () => <div data-testid="mock-chart" /> }));
+vi.mock('@/design-system/Chart', () => ({ Chart: vi.fn(() => <div data-testid="mock-chart" />) }));
 // jsdom 下 CodeMirror 测量受限，mock SQL 编辑器
 vi.mock('../SqlEditor', () => ({
   SqlEditor: ({ value }: { value: string }) => <div data-testid="mock-sql-editor">{value}</div>,
@@ -13,6 +13,7 @@ import { SearchPage } from '../SearchPage';
 import { searchSql } from '@/api/search';
 import { getSavedQuery, saveQuery } from '@/api/analytics';
 import { useAuthStore } from '@/store/auth';
+import { Chart } from '@/design-system/Chart';
 
 // mock SQL 直查（工厂会被提升，内部用字面量；具体实现按 SQL 形状在 beforeEach 分发）
 vi.mock('@/api/search', async (importOriginal) => ({
@@ -56,6 +57,8 @@ function BackButton() {
   const navigate = useNavigate();
   return <button type="button" onClick={() => navigate(-1)} data-testid="test-back">back</button>;
 }
+
+HTMLElement.prototype.scrollIntoView = vi.fn();
 
 const observers: { callback: IntersectionObserverCallback; disconnect: ReturnType<typeof vi.fn> }[] = [];
 function intersect() {
@@ -131,6 +134,131 @@ describe('SearchPage', () => {
     // 保存的搜索抽屉打开后可见列表项
     fireEvent.click(screen.getByTestId('search-saved-button'));
     expect(await screen.findByText('慢链路')).toBeTruthy();
+  });
+
+  it.each(['lucene', 'sql'])('定时刷新保留筛选树状态且仅更新结果窗口（%s）', async (mode) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-20T10:00:00Z'));
+    const defaultSearch = vi.mocked(searchSql).getMockImplementation()!;
+    vi.mocked(searchSql).mockImplementation(async (request) => request.parameters?.page_offset !== undefined || request.sql.includes('AS bucket')
+      ? defaultSearch(request)
+      : { columns: ['v', 'c'], rows: [[request.sql.includes('json_keys') ? 'order.no' : 'A-100', 12]], elapsedMs: 1, truncated: false });
+    const { unmount } = render(<MemoryRouter initialEntries={[`/search?source=logs&mode=${mode}&refresh=10`]}><SearchPage /></MemoryRouter>);
+    try {
+      await screen.findByText('数据库连接超时');
+      fireEvent.click(screen.getByTestId('search-toggle-filters'));
+      fireEvent.click(await screen.findByTestId('search-filter-key-attributes.order.no'));
+      await screen.findByTestId('search-filter-value-A-100');
+      const input = screen.getByTestId('search-filter-values-search-attributes.order.no');
+      fireEvent.change(input, { target: { value: 'A-' } });
+      await waitFor(() => expect(vi.mocked(searchSql).mock.calls.some(([request]) => request.parameters?.key === '%A-%')).toBe(true));
+      await screen.findByTestId('search-filter-value-A-100');
+      input.focus();
+      const panel = screen.getByTestId('search-side-panel');
+      panel.scrollTop = 80;
+      const facetRequests = () => vi.mocked(searchSql).mock.calls.filter(([request]) => request.parameters?.page_offset === undefined && !request.sql.includes('AS bucket'));
+      const initialFacets = facetRequests().length;
+      const first = vi.mocked(searchSql).mock.calls.find(([request]) => request.parameters?.page_offset === 0)![0];
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      const latest = expectLastRequest(['FROM {{logs}}']);
+      expect(dayjs(latest.to).diff(dayjs(first.to))).toBe(10_000);
+      expect(latest.parameters?.page_offset).toBe(0);
+      const histogram = vi.mocked(searchSql).mock.calls.filter(([request]) => request.sql.includes('AS bucket')).slice(-1)[0][0];
+      expect(histogram.to).toBe(latest.to);
+      expect(vi.mocked(Chart).mock.calls.slice(-1)[0][0].option.animation).toBe(false);
+      expect(facetRequests()).toHaveLength(initialFacets);
+      expect(screen.getByTestId('search-filter-values-search-attributes.order.no')).toBe(input);
+      expect(input).toHaveValue('A-');
+      expect(input).toHaveFocus();
+      expect(panel.scrollTop).toBe(80);
+      expect(screen.getByTestId('search-filter-value-A-100')).toBeTruthy();
+      expect(screen.getByTestId('search-run').querySelector('.animate-spin')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('search-run'));
+      await waitFor(() => expect(facetRequests().length).toBeGreaterThan(initialFacets));
+      expect(facetRequests().slice(-1)[0][0].to).toBe(latest.to);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('后台慢查询不重叠，失败保留结果并允许下一轮恢复', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const defaultSearch = vi.mocked(searchSql).getMockImplementation()!;
+    let rejectRefresh!: (reason: Error) => void;
+    let firstPages = 0;
+    vi.mocked(searchSql).mockImplementation(async (request) => {
+      if (request.parameters?.page_offset === 0 && ++firstPages === 2) {
+        return new Promise((_, reject) => { rejectRefresh = reject; });
+      }
+      return defaultSearch(request);
+    });
+    const { unmount } = render(<MemoryRouter initialEntries={['/search?source=logs&refresh=10']}><SearchPage /></MemoryRouter>);
+    try {
+      await screen.findByText('数据库连接超时');
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(firstPages).toBe(2);
+      expect(screen.getByText('数据库连接超时')).toBeTruthy();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(firstPages).toBe(2);
+      await act(async () => rejectRefresh(new Error('后台刷新失败')));
+      expect(screen.getByText('后台刷新失败')).toBeTruthy();
+      expect(screen.getByText('数据库连接超时')).toBeTruthy();
+      expect(screen.getByTestId('search-result-count').textContent).toContain('3,838');
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(firstPages).toBe(3);
+      expect(screen.queryByText('后台刷新失败')).toBeNull();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('手动查询可抢占后台请求，迟到结果不覆盖新查询', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const defaultSearch = vi.mocked(searchSql).getMockImplementation()!;
+    let resolveRefresh!: (value: Awaited<ReturnType<typeof searchSql>>) => void;
+    let firstPages = 0;
+    vi.mocked(searchSql).mockImplementation(async (request) => {
+      const response = await defaultSearch(request);
+      if (request.parameters?.page_offset !== 0) return response;
+      if (++firstPages === 2) return new Promise((resolve) => { resolveRefresh = resolve; });
+      return firstPages > 2 ? { ...response, rows: [['2026-11-20T10:00:00Z', 'api', 'INFO', 'manual-result', null]] } : response;
+    });
+    const { unmount } = render(<MemoryRouter initialEntries={['/search?source=logs&refresh=10']}><SearchPage /></MemoryRouter>);
+    try {
+      await screen.findByText('数据库连接超时');
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      fireEvent.click(screen.getByTestId('search-run'));
+      await screen.findByText('manual-result');
+      await act(async () => resolveRefresh({ columns: ['body'], rows: [['stale-refresh']], elapsedMs: 1, truncated: false }));
+      expect(screen.queryByText('stale-refresh')).toBeNull();
+      expect(screen.getByText('manual-result')).toBeTruthy();
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(firstPages).toBe(4);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['refresh=0', 'refresh=10&from=2026-11-20T09:00:00Z&to=2026-11-20T10:00:00Z'])('关闭刷新或固定时间窗不轮询（%s）', async (params) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const { unmount } = render(<MemoryRouter initialEntries={[`/search?source=logs&${params}`]}><SearchPage /></MemoryRouter>);
+    try {
+      await screen.findByText('数据库连接超时');
+      const calls = vi.mocked(searchSql).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(searchSql).toHaveBeenCalledTimes(calls);
+      unmount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(searchSql).toHaveBeenCalledTimes(calls);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
   });
 
   it.each(['zh-CN', 'en-US'])('有续页时不显示截断或上限提示（%s）', async (language) => {
@@ -496,6 +624,98 @@ describe('SearchPage', () => {
     });
   });
 
+  it('侧栏多选、取消、排除、仅此值与删除实时同步 Lucene，不自动执行', async () => {
+    const defaultSearch = vi.mocked(searchSql).getMockImplementation()!;
+    vi.mocked(searchSql).mockImplementation(async (request) => request.parameters?.page_offset !== undefined || request.sql.includes('AS bucket')
+      ? defaultSearch(request)
+      : { columns: ['v', 'c'], rows: [['api', 12], ['worker', 8]], elapsedMs: 1, truncated: false });
+    render(<MemoryRouter initialEntries={['/search?source=logs&q=timeout%20OR%20failed']}><SearchPage /></MemoryRouter>);
+    await screen.findByText('数据库连接超时');
+    const rowRequests = () => vi.mocked(searchSql).mock.calls.filter(([request]) => request.parameters?.page_offset !== undefined);
+    const initialRuns = rowRequests().length;
+    fireEvent.click(screen.getByTestId('search-toggle-filters'));
+    fireEvent.click(screen.getByTestId('search-filter-group-service'));
+    await screen.findByTestId('search-filter-value-api');
+    const input = screen.getByTestId('search-where');
+    fireEvent.click(screen.getByRole('checkbox', { name: /^api$/ }));
+    expect(input).toHaveValue('(timeout OR failed) service:"api"');
+    fireEvent.click(screen.getByRole('checkbox', { name: /^worker$/ }));
+    expect(input).toHaveValue('(timeout OR failed) (service:"api" OR service:"worker")');
+    fireEvent.click(screen.getByRole('checkbox', { name: /^api$/ }));
+    expect(input).toHaveValue('(timeout OR failed) service:"worker"');
+    fireEvent.click(screen.getByTestId('search-filter-value-exclude-api'));
+    expect(input).toHaveValue('(timeout OR failed) service:"worker" -service:"api"');
+    fireEvent.click(screen.getByTestId('search-filter-value-only-api'));
+    expect(input).toHaveValue('(timeout OR failed) service:"api"');
+    expect(rowRequests()).toHaveLength(initialRuns);
+    fireEvent.click(screen.getByTestId('search-run'));
+    await waitFor(() => expect(rowRequests()).toHaveLength(initialRuns + 1));
+    const request = expectLastRequest(['service IN ($p2)'], { p0: '%timeout%', p1: '%failed%', p2: 'api' });
+    expect(request.sql.match(/service IN/g)).toHaveLength(1);
+    const histogram = vi.mocked(searchSql).mock.calls.filter(([entry]) => entry.sql.includes('AS bucket')).slice(-1)[0][0];
+    expect(histogram.parameters).toMatchObject({ p0: '%timeout%', p1: '%failed%', p2: 'api' });
+    fireEvent.click(screen.getByRole('button', { name: 'remove filter' }));
+    expect(input).toHaveValue('timeout OR failed');
+    fireEvent.click(screen.getByTestId('search-denoise'));
+    expect(input).toHaveValue('(timeout OR failed) -(severity:"DEBUG" OR severity:"TRACE")');
+    fireEvent.change(input, { target: { value: 'timeout OR failed' } });
+    expect(screen.getByTestId('search-denoise')).not.toBeChecked();
+  });
+
+  it('旧链接回填完整条件，手动编辑后旧筛选不再隐藏生效', async () => {
+    const filters = encodeURIComponent(JSON.stringify([{ field: 'service', op: 'in', value: '', values: ['api', 'worker'] }]));
+    const searches: string[] = [];
+    render(<MemoryRouter initialEntries={[`/search?source=logs&q=timeout&filters=${filters}`]}>
+      <LocationProbe onChange={(search) => searches.push(search)} /><SearchPage />
+    </MemoryRouter>);
+    await screen.findByText('数据库连接超时');
+    const input = screen.getByTestId('search-where');
+    expect(input).toHaveValue('(timeout) (service:"api" OR service:"worker")');
+    fireEvent.change(input, { target: { value: '(timeout) service:"new"' } });
+    expect(input).toHaveValue('(timeout) service:"new"');
+    expect(screen.queryByTestId('search-filter-chip')).toBeNull();
+    fireEvent.click(screen.getByTestId('search-run'));
+    await waitFor(() => expectLastRequest(['service = $p1'], { p0: '%timeout%', p1: 'new' }));
+    await waitFor(() => expect(new URLSearchParams(searches[searches.length - 1]).has('filters')).toBe(false));
+    fireEvent.change(input, { target: { value: '(timeout) service:"new" ' } });
+    expect(input).toHaveValue('(timeout) service:"new" ');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('search-run'));
+    await waitFor(() => expectLastRequest(['FROM {{logs}}'], {}));
+  });
+
+  it('链路根 Span 与耗时同步显示，SQL 切回 Lucene 保留筛选', async () => {
+    render(<MemoryRouter initialEntries={['/search?source=traces&mode=sql']}><SearchPage /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('search-result-count').textContent).toContain('3,838'));
+    fireEvent.click(screen.getByRole('checkbox', { name: '仅根 Span' }));
+    fireEvent.change(screen.getByLabelText('最小耗时'), { target: { value: '1.5' } });
+    fireEvent.keyDown(screen.getByTestId('search-syntax'), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Lucene' }));
+    expect(screen.getByTestId('search-where')).toHaveValue('(-parent_span_id:* OR parent_span_id:"" OR parent_span_id:"0000000000000000") duration_us:>=1500');
+  });
+
+  it('保存重开仍展示侧栏条件且只绑定一次', async () => {
+    const filters = encodeURIComponent(JSON.stringify([{ field: 'service', op: 'in', value: '', values: ['api', 'worker'] }]));
+    const first = render(<MemoryRouter initialEntries={[`/search?source=logs&q=timeout&filters=${filters}`]}><SearchPage /></MemoryRouter>);
+    await screen.findByText('数据库连接超时');
+    vi.mocked(saveQuery).mockClear();
+    fireEvent.click(screen.getByTestId('search-saved-button'));
+    fireEvent.click(await screen.findByRole('button', { name: '保存当前搜索' }));
+    fireEvent.change(await screen.findByPlaceholderText('输入名称（64 字以内）'), { target: { value: '同步筛选' } });
+    fireEvent.click(screen.getByRole('button', { name: /^保存$/ }));
+    await waitFor(() => expect(saveQuery).toHaveBeenCalled());
+    const definition = vi.mocked(saveQuery).mock.calls[0][0].definition!;
+    expect(JSON.parse(definition)).toMatchObject({ where: 'timeout', filters: [{ field: 'service', op: 'in', values: ['api', 'worker'] }] });
+    first.unmount();
+    vi.mocked(getSavedQuery).mockResolvedValueOnce({
+      id: 12, name: '同步筛选', kind: 'search', sqlText: '', definition, description: '',
+      createTime: '2026-11-20T10:00:00Z', updateTime: '2026-11-20T10:00:00Z',
+    });
+    render(<MemoryRouter initialEntries={['/saved-searches/12']}><SearchPage savedId={12} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('search-where')).toHaveValue('(timeout) (service:"api" OR service:"worker")'));
+    await waitFor(() => expectLastRequest(['service IN ($p1, $p2)'], { p0: '%timeout%', p1: 'api', p2: 'worker' }));
+  });
+
   it('URL 条件恢复：带参地址打开即按 q/limit/range 恢复条件并自动执行首查', async () => {
     render(
       <MemoryRouter initialEntries={['/search?source=logs&q=severity%3AERROR%20timeout&limit=200&range=1h']}>
@@ -549,6 +769,7 @@ describe('SearchPage', () => {
     await waitFor(() => {
       expectLastRequest(['FROM {{traces}}', 'trace_id = $p0'], { p0: 'abc123' });
     });
+    expect(screen.getByTestId('search-where')).toHaveValue('trace_id:"abc123"');
     // trace_id 过滤物化为 filters 的同时，traceId 深链参数原样保留（浏览器回退语义不变）
     await waitFor(() => {
       expect(searches.some((search) => search.includes('traceId=abc123') && search.includes('filters='))).toBe(true);

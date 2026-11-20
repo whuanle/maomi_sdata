@@ -135,6 +135,14 @@ public interface IStoreInfo
     Task<long> CountTableAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// 批量统计多张表行数（单条 UNION ALL 查询，减少查询门占用与连接克隆次数）.
+    /// </summary>
+    /// <param name="tables">（标签，表名）列表；表名仅限内部按天表，不存在的表按 0 计.</param>
+    /// <param name="cancellationToken">取消.</param>
+    /// <returns>标签到行数的映射.</returns>
+    Task<IReadOnlyDictionary<string, long>> CountTablesAsync(IReadOnlyList<(string Name, string TableName)> tables, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 列出指定前缀的表名.
     /// </summary>
     /// <param name="prefix">前缀.</param>

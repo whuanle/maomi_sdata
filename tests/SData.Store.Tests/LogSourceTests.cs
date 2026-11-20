@@ -172,12 +172,16 @@ namespace SData.Store.Tests;
         }, TestCancellationToken).GetAwaiter().GetResult();
         using var connection = _connectionManager.CloneConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT service, body, source FROM {table}";
+        command.CommandText = $"SELECT service, body, source, id, ts, severity, trace_id, span_id, attributes, resource FROM {table}";
         using var reader = command.ExecuteReader();
         Assert.True(reader.Read());
         Assert.Equal("migrated", reader.GetString(0));
         Assert.Equal("legacy append", reader.GetString(1));
         Assert.Equal("kafka:legacy", reader.GetString(2));
+        Assert.True(reader.GetInt64(3) > 0);
+        Assert.Equal(new DateTime(1980, 5, 6, 12, 0, 0), reader.GetDateTime(4));
+        Assert.Equal("INFO", reader.GetString(5));
+        for (var i = 6; i < 10; i++) Assert.True(reader.IsDBNull(i));
     }
 
     /// <summary>
@@ -230,6 +234,48 @@ namespace SData.Store.Tests;
         }, TestCancellationToken);
         Assert.Equal(2, all.Count);
         Assert.Contains(all, x => x.Source == null);
+    }
+
+    /// <summary>
+    /// 服务端分页：OFFSET 下推到 SQL，page&gt;1 能取到第二段（修复内存 Skip 导致的空页）.
+    /// </summary>
+    [Fact]
+    public async Task QueryAsync_OffsetPaging_ReturnsSecondPage()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var batch = Enumerable.Range(0, 5).Select(i => new IngestItem(IngestKind.Log,
+            new LogRecord
+            {
+                Timestamp = now.AddSeconds(-i),
+                Service = "page-svc",
+                Severity = "INFO",
+                Body = "page-" + i,
+            })).ToList();
+        await _writer.FlushAsync(batch, TestCancellationToken);
+
+        var range = new LogQuery
+        {
+            Start = now.AddMinutes(-1),
+            End = now.AddMinutes(1),
+            Service = "page-svc",
+            Limit = 2,
+        };
+
+        var first = await _logStore.QueryAsync(new LogQuery
+        {
+            Start = range.Start, End = range.End, Service = range.Service, Limit = 2, Offset = 0,
+        }, TestCancellationToken);
+        var second = await _logStore.QueryAsync(new LogQuery
+        {
+            Start = range.Start, End = range.End, Service = range.Service, Limit = 2, Offset = 2,
+        }, TestCancellationToken);
+
+        Assert.Equal(2, first.Count);
+        Assert.Equal(2, second.Count);
+        Assert.Equal("page-0", first[0].Body);
+        Assert.Equal("page-1", first[1].Body);
+        Assert.Equal("page-2", second[0].Body);
+        Assert.Equal("page-3", second[1].Body);
     }
 
     /// <summary>

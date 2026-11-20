@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '@/i18n';
 import { SettingsPage } from '../SettingsPage';
 import { useAuthStore } from '@/store/auth';
-import { fetchSettings, saveOtlpSettings } from '@/api/settings';
+import { fetchSettings, saveOtlpSettings, saveDuckDbSettings } from '@/api/settings';
 
 const { fetchStatusMock } = vi.hoisted(() => ({ fetchStatusMock: vi.fn() }));
 vi.mock('@/api/monitor', () => ({ fetchStatus: fetchStatusMock }));
@@ -36,7 +36,9 @@ vi.mock('@/api/settings', () => ({
   saveNotificationChannel: vi.fn(),
   deleteNotificationChannel: vi.fn(),
   testNotificationChannel: vi.fn(),
+  saveDuckDbSettings: vi.fn().mockResolvedValue({ memoryLimit: '2GB', effectiveMemoryLimit: '1.8 GiB' }),
   fetchSettings: vi.fn().mockResolvedValue({
+    duckDb: { memoryLimit: '512MB', effectiveMemoryLimit: '488.2 MiB' },
     s3: { endpoint: 'http://minio:9000', bucket: 'sdata-cold', prefix: 'sdata/archive', accessKey: 'minioroot', secretKey: '******', hasSecret: true },
     retention: {
       logs: { hotDays: 30, coldDays: 90 },
@@ -67,6 +69,64 @@ beforeEach(() => {
 });
 
 describe('SettingsPage', () => {
+  it.each([undefined, null])('handles missing DuckDB settings from an older backend (%s) and recovers on retry', async (duckDb) => {
+    const settings = await fetchSettings();
+    vi.mocked(fetchSettings).mockResolvedValueOnce({ ...settings, duckDb });
+    render(<MemoryRouter initialEntries={['/settings?tab=duckdb']}><SettingsPage /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/更新并重启后端|Update and restart the backend/);
+    expect(screen.queryByLabelText(/内存限制|Memory limit/)).toBeNull();
+    expect(saveDuckDbSettings).not.toHaveBeenCalled();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /冷存储 S3|Cold Storage S3/ }));
+    expect(await screen.findByPlaceholderText('http://minio:9000')).toBeTruthy();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'DuckDB' }));
+    fireEvent.click(screen.getByRole('button', { name: /重试|Retry/ }));
+    expect(await screen.findByLabelText(/内存限制|Memory limit/)).toHaveValue('512MB');
+    expect(screen.queryByTestId('duckdb-unavailable')).toBeNull();
+  });
+
+  it('increases DuckDB memory and keeps the saved value across tabs', async () => {
+    render(<MemoryRouter initialEntries={['/settings?tab=duckdb']}><SettingsPage /></MemoryRouter>);
+    const input = await screen.findByLabelText(/内存限制|Memory limit/);
+    expect(input).toHaveValue('512MB');
+    expect(screen.getByText('488.2 MiB')).toBeTruthy();
+    fireEvent.change(input, { target: { value: '2GB' } });
+    fireEvent.click(screen.getByRole('button', { name: /^(保\s*存|Save)$/ }));
+    await waitFor(() => expect(saveDuckDbSettings).toHaveBeenCalledWith({ memoryLimit: '2GB' }));
+    expect(await screen.findByText('1.8 GiB')).toBeTruthy();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /成员|Members/ }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'DuckDB' }));
+    expect(await screen.findByLabelText(/内存限制|Memory limit/)).toHaveValue('2GB');
+  });
+
+  it.each(['', '0GB', '-2GB', 'unlimited', '2TB', '9999999999999999GB'])('rejects invalid DuckDB capacity %j', async (value) => {
+    render(<MemoryRouter initialEntries={['/settings?tab=duckdb']}><SettingsPage /></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText(/内存限制|Memory limit/), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: /^(保\s*存|Save)$/ }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(saveDuckDbSettings).not.toHaveBeenCalled();
+  });
+
+  it('preserves the DuckDB draft when saving fails', async () => {
+    vi.mocked(saveDuckDbSettings).mockRejectedValueOnce(new Error('unavailable'));
+    render(<MemoryRouter initialEntries={['/settings?tab=duckdb']}><SettingsPage /></MemoryRouter>);
+    const input = await screen.findByLabelText(/内存限制|Memory limit/);
+    fireEvent.change(input, { target: { value: '4GiB' } });
+    const save = screen.getByRole('button', { name: /^(保\s*存|Save)$/ });
+    fireEvent.click(save);
+    await waitFor(() => expect(saveDuckDbSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(save).not.toBeDisabled());
+    expect(input).toHaveValue('4GiB');
+    expect(screen.getByText('488.2 MiB')).toBeTruthy();
+  });
+
+  it('falls back to members for a non-admin DuckDB deep link', async () => {
+    useAuthStore.setState({ token: 'test-token', username: 'reader', role: 'readonly' });
+    render(<MemoryRouter initialEntries={['/settings?tab=duckdb']}><SettingsPage /></MemoryRouter>);
+    expect(await screen.findByRole('tab', { name: /成员|Members/ })).toHaveAttribute('data-state', 'active');
+    expect(screen.queryByRole('tab', { name: 'DuckDB' })).toBeNull();
+    expect(fetchSettings).not.toHaveBeenCalled();
+  });
+
   it('masks saved OTLP headers and confirms independent removal', async () => {
     const settings = await fetchSettings();
     vi.mocked(fetchSettings).mockResolvedValueOnce({ ...settings, otlp: { ...settings.otlp, traceHeaders: '******', metricsHeaders: '******' } });
@@ -163,7 +223,7 @@ describe('SettingsPage', () => {
     vi.mocked(fetchSettings).mockImplementationOnce(() => new Promise((resolve) => { resolveSettings = resolve; }));
     render(<MemoryRouter initialEntries={['/settings?tab=s3']}><SettingsPage /></MemoryRouter>);
 
-    expect(screen.getAllByRole('tab')).toHaveLength(7);
+    expect(screen.getAllByRole('tab')).toHaveLength(8);
     expect(screen.getByRole('tab', { name: /冷存储 S3|Cold Storage S3/ })).toHaveAttribute('data-state', 'active');
     expect(screen.getByRole('status')).toBeTruthy();
     resolveSettings(settings);
@@ -175,7 +235,7 @@ describe('SettingsPage', () => {
     render(<MemoryRouter initialEntries={['/settings?tab=s3']}><SettingsPage /></MemoryRouter>);
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/设置加载失败|Unable to load settings/);
-    expect(screen.getAllByRole('tab')).toHaveLength(7);
+    expect(screen.getAllByRole('tab')).toHaveLength(8);
     expect(screen.getByRole('tab', { name: /冷存储 S3|Cold Storage S3/ })).toHaveAttribute('data-state', 'active');
     fireEvent.mouseDown(screen.getByRole('tab', { name: /通知渠道|Notification channels/ }));
     expect(await screen.findByText('Telegram Bot')).toBeTruthy();

@@ -191,7 +191,7 @@ public class SettingsTests
         var first = await handler.Handle(new SaveOtlpSettingsCommand(), default);
         Assert.Equal(OtlpHeaders.SecretMask, first.TraceHeaders);
         Assert.Equal("authorization=Bearer file-trace", harness.Provider.GetOtlp().TraceHeaders);
-        var response = await new QuerySettingsCommandHandler(harness.Provider, new SystemOptions()).Handle(new(), default);
+        var response = await new QuerySettingsCommandHandler(harness.Provider, new SystemOptions(), new FakeRuntime()).Handle(new(), default);
         Assert.Equal(OtlpHeaders.SecretMask, response.Otlp.MetricsHeaders);
         Assert.Equal("x-api-key=file-metrics", harness.Provider.GetOtlp().MetricsHeaders);
 
@@ -241,6 +241,128 @@ public class SettingsTests
         var error = await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() =>
             handler.Handle(new SaveMqInstancesCommand { Instances = [instance] }, default));
         Assert.Equal(400, error.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(" 1.50 gb ", "1.5GB")]
+    [InlineData("2048MiB", "2048MiB")]
+    [InlineData("0.5GiB", "0.5GiB")]
+    public void DuckDbCapacity_Normalizes(string input, string expected)
+    {
+        Assert.True(DuckDbMemoryLimit.TryNormalize(input, out var result));
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("0GB")]
+    [InlineData("-1GB")]
+    [InlineData("unlimited")]
+    [InlineData("1TB")]
+    [InlineData("1e3MB")]
+    [InlineData("9999999999999999GB")]
+    [InlineData("2GB'; DROP TABLE settings; --")]
+    public void DuckDbCapacity_RejectsInvalidInput(string? input)
+    {
+        var validator = new FluentValidation.InlineValidator<SaveDuckDbSettingsCommand>();
+        SaveDuckDbSettingsCommand.Validate(validator);
+        Assert.False(validator.Validate(new SaveDuckDbSettingsCommand { MemoryLimit = input! }).IsValid);
+    }
+
+    [Theory]
+    [InlineData("{bad")]
+    [InlineData("{}")]
+    [InlineData("null")]
+    [InlineData("{\"memoryLimit\":\"unlimited\"}")]
+    [InlineData("{\"memoryLimit\":null}")]
+    public async Task DuckDbProvider_InvalidOverrideFallsBackToFile(string json)
+    {
+        using var harness = new SettingsHarness(options => options.DuckDb.MemoryLimit = "768MB");
+        await harness.Provider.SaveAsync(SettingKeys.DuckDb, json, default);
+        Assert.Equal("768MB", harness.Provider.GetDuckDb().MemoryLimit);
+    }
+
+    [Fact]
+    public async Task DuckDbSettings_SaveAndReload_OnlyOverridesMemory()
+    {
+        using var harness = new SettingsHarness();
+        var runtime = new FakeRuntime();
+        var service = new DuckDbSettingsService(harness.Provider, runtime, NullLogger<DuckDbSettingsService>.Instance);
+        var saved = await new SaveDuckDbSettingsCommandHandler(service).Handle(new() { MemoryLimit = " 2 gb " }, default);
+        Assert.Equal("2GB", saved.MemoryLimit);
+        Assert.Equal("2GB", runtime.MemoryLimit);
+        var restarted = new SystemSettingsProvider(new SystemOptions(), new SettingsHarness.SingleScopeFactory(harness.Db),
+            new DefaultIdProvider(3), NullLogger<SystemSettingsProvider>.Instance);
+        Assert.Equal("2GB", restarted.GetDuckDb().MemoryLimit);
+        var query = await new QuerySettingsCommandHandler(harness.Provider, new SystemOptions(), runtime).Handle(new(), default);
+        Assert.Equal(saved.EffectiveMemoryLimit, query.DuckDb.EffectiveMemoryLimit);
+        var json = (await harness.Db.Settings.SingleAsync(x => x.Key == SettingKeys.DuckDb)).Value;
+        Assert.DoesNotContain("path", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("threads", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DuckDbSettings_RuntimeFailureDoesNotPersist()
+    {
+        using var harness = new SettingsHarness();
+        var runtime = new FakeRuntime { FailValue = "2GB" };
+        var service = new DuckDbSettingsService(harness.Provider, runtime, NullLogger<DuckDbSettingsService>.Instance);
+        var error = await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => service.SaveAsync("2GB", default));
+        Assert.Equal(503, error.StatusCode);
+        Assert.Equal("512MB", runtime.MemoryLimit);
+        Assert.Empty(await harness.Db.Settings.ToListAsync());
+    }
+
+    [Fact]
+    public async Task DuckDbSettings_PersistenceFailureRestoresRuntime()
+    {
+        using var harness = new SettingsHarness();
+        var runtime = new FakeRuntime();
+        harness.Provider.GetDuckDb();
+        await harness.Db.Database.ExecuteSqlRawAsync("DROP TABLE setting");
+        var service = new DuckDbSettingsService(harness.Provider, runtime, NullLogger<DuckDbSettingsService>.Instance);
+        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => service.SaveAsync("2GB", default));
+        Assert.Equal("512MB", runtime.MemoryLimit);
+        Assert.Equal("512MB", harness.Provider.GetDuckDb().MemoryLimit);
+    }
+
+    [Fact]
+    public async Task DuckDbSettings_RollbackFailureIsExplicit()
+    {
+        using var harness = new SettingsHarness();
+        var runtime = new FakeRuntime { FailValue = "512MB" };
+        harness.Provider.GetDuckDb();
+        await harness.Db.Database.ExecuteSqlRawAsync("DROP TABLE setting");
+        var service = new DuckDbSettingsService(harness.Provider, runtime, NullLogger<DuckDbSettingsService>.Instance);
+        var error = await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => service.SaveAsync("2GB", default));
+        Assert.Equal(503, error.StatusCode);
+        Assert.Contains("恢复失败", error.Message);
+        Assert.Equal("2GB", runtime.MemoryLimit);
+    }
+
+    [Fact]
+    public async Task DuckDbSettings_ConcurrentSavesStayConsistent()
+    {
+        using var harness = new SettingsHarness();
+        var runtime = new FakeRuntime();
+        var service = new DuckDbSettingsService(harness.Provider, runtime, NullLogger<DuckDbSettingsService>.Instance);
+        await Task.WhenAll(Enumerable.Range(1, 8).Select(i => service.SaveAsync($"{i}GB", default)));
+        Assert.Equal(runtime.MemoryLimit, harness.Provider.GetDuckDb().MemoryLimit);
+    }
+
+    private sealed class FakeRuntime : IDuckDbRuntimeSettings
+    {
+        public string MemoryLimit { get; private set; } = "512MB";
+        public string EffectiveMemoryLimit => MemoryLimit;
+        public string? FailValue { get; init; }
+
+        public async Task ApplyMemoryLimitAsync(string memoryLimit, CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            if (memoryLimit == FailValue) throw new InvalidOperationException("fake application failure");
+            MemoryLimit = memoryLimit;
+        }
     }
 
     /// <summary>S3 SECRET 管理假实现（记录调用）.</summary>

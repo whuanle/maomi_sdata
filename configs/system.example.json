@@ -22,7 +22,9 @@
     "DuckDb": {
       "Path": "data/sdata.duckdb",
       "MemoryLimit": "512MB",
-      "Threads": 0,
+      "Threads": 2,
+      "MaxConcurrentQueries": 1,
+      "QueryTimeoutSeconds": 30,
       "MaxQueryDays": 31,
       "ColdMaxQueryDays": 366,
       "Retention": {

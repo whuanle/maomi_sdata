@@ -47,6 +47,7 @@ public class RollupService : BackgroundService
             }
             catch (Exception exception)
             {
+                _connectionManager.LogResourceFailure(exception, "rollup");
                 _logger.LogError(exception, "Metric rollup backfill failed");
             }
         }
@@ -77,24 +78,39 @@ public class RollupService : BackgroundService
             return;
         }
 
-        // 窗口整体重算：先删后插，重复执行幂等
-        await _connectionManager.ExecuteWriteAsync(
-            $"DELETE FROM {table} WHERE bucket_ts >= $from AND bucket_ts < $to",
-            [new DuckDBParameter("from", LogStore.ToDb(from)), new DuckDBParameter("to", LogStore.ToDb(to))],
-            cancellationToken);
-
-        var union = string.Join(" UNION ALL ", tables.Select(t => $"SELECT name, labels, ts, value FROM {t} WHERE ts >= $from AND ts < $to"));
-        var sql = $"""
-            INSERT INTO {table}
-            SELECT name, md5(coalesce(labels, '')), labels,
-                   time_bucket(INTERVAL '{stepSql}', ts) AS bucket_ts,
-                   min(value), max(value), sum(value), count(*)
-            FROM ({union})
-            GROUP BY ALL
-            """;
-        await _connectionManager.ExecuteWriteAsync(sql,
-            [new DuckDBParameter("from", LogStore.ToDb(from)), new DuckDBParameter("to", LogStore.ToDb(to))],
-            cancellationToken);
+        // 每桶单独计算与提交，限制中间聚合规模；计算失败不删除原汇总。
+        for (var bucket = from; bucket < to; bucket += step)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var queryLease = await _connectionManager.LockQueryAsync(cancellationToken);
+            using var connection = _connectionManager.CloneConnection();
+            using var command = connection.CreateCommand();
+            command.Parameters.Add(new DuckDBParameter("from", LogStore.ToDb(bucket)));
+            command.Parameters.Add(new DuckDBParameter("to", LogStore.ToDb(bucket + step)));
+            var union = string.Join(" UNION ALL ", tables.Select(t => $"SELECT name, labels, ts, value FROM {t} WHERE ts >= $from AND ts < $to"));
+            command.CommandText = $"""
+                CREATE TEMP TABLE sdata_rollup_stage AS
+                SELECT name, md5(coalesce(labels, '')) AS labels_hash, labels,
+                       time_bucket(INTERVAL '{stepSql}', ts) AS bucket_ts,
+                       min(value) AS min, max(value) AS max, sum(value) AS sum, count(*) AS count
+                FROM ({union})
+                GROUP BY ALL
+                """;
+            await using var timer = new Timer(_ =>
+            {
+                if (cancellationToken.IsCancellationRequested) command.Cancel();
+            }, null, 50, 50);
+            using var writeLease = await _connectionManager.LockWriteAsync(cancellationToken);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            using var transaction = connection.BeginTransaction();
+            command.CommandText = $"DELETE FROM {table} WHERE bucket_ts >= $from AND bucket_ts < $to";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            command.Parameters.Clear();
+            command.CommandText = $"INSERT INTO {table} SELECT * FROM sdata_rollup_stage";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            transaction.Commit();
+        }
     }
 
     private static DateTimeOffset FloorToStep(DateTimeOffset time, TimeSpan step)

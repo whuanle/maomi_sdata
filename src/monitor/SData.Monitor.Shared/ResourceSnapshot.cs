@@ -17,6 +17,10 @@ public sealed record ResourceSnapshot
     public long? WorkingSetBytes { get; init; }
     public long? PrivateMemoryBytes { get; init; }
     public long? GcHeapBytes { get; init; }
+    /// <summary>Gen0/1/2 GC 累计回收次数（进程启动以来，配合 Prometheus rate 计算速率）.</summary>
+    public long GcCollectionCount0 { get; init; }
+    public long GcCollectionCount1 { get; init; }
+    public long GcCollectionCount2 { get; init; }
     public int? ProcessThreads { get; init; }
     public int? ThreadPoolThreads { get; init; }
     public long? PendingWorkItems { get; init; }

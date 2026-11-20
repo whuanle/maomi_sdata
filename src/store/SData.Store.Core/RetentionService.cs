@@ -124,8 +124,24 @@ public class RetentionService : BackgroundService
         await DropExpiredAsync(DataDomain.RumReplay, TimeTables.RumReplayPrefix, cancellationToken);
         await ExpireColdObjectsAsync(archived, cancellationToken);
 
+        var (metricHotDays, metricColdDays) = ArchiveService.ResolveRetention(DataDomain.Metrics, _settingsProvider.GetRetention(), _systemOptions.DuckDb);
+        var rollupDays = metricHotDays <= 0 ? 0 : metricHotDays + Math.Max(0, metricColdDays);
+        await PruneRollupsAsync(_connectionManager, DateTimeOffset.UtcNow, rollupDays, cancellationToken);
+
         // CHECKPOINT 收缩 WAL
         await _connectionManager.ExecuteWriteAsync("CHECKPOINT", cancellationToken: cancellationToken);
+    }
+
+    /// <summary>汇总表与指标总保留期一致；非正值表示永久保留.</summary>
+    internal static async Task PruneRollupsAsync(DuckDbConnectionManager manager, DateTimeOffset now, int days, CancellationToken token)
+    {
+        if (days <= 0) return;
+        var cutoff = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero).AddDays(-days);
+        foreach (var table in new[] { TimeTables.Rollup5mTable, TimeTables.Rollup1hTable })
+        {
+            await manager.ExecuteWriteAsync($"DELETE FROM {table} WHERE bucket_ts < $cutoff",
+                [new DuckDB.NET.Data.DuckDBParameter("cutoff", LogStore.ToDb(cutoff))], token);
+        }
     }
 
     private async Task<List<(long Id, string Domain, string Day, string ObjectKey)>> LoadArchivedRowsAsync(CancellationToken cancellationToken)

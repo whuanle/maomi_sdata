@@ -52,6 +52,9 @@ public class LogQuery
 
     /// <summary>返回条数上限.</summary>
     public int Limit { get; set; } = 100;
+
+    /// <summary>跳过条数（服务端分页，下推到 SQL OFFSET）.</summary>
+    public int Offset { get; set; }
 }
 
 /// <summary>

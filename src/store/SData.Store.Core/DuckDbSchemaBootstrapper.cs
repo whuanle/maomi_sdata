@@ -91,6 +91,7 @@ public class DuckDbSchemaBootstrapper
             await _connectionManager.ExecuteWriteAsync(
                 $"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS id BIGINT",
                 cancellationToken: cancellationToken);
+            _connectionManager.InvalidateLogColumns(table);
             _logger.LogDebug("Migrated legacy log table {Table}: added source/id columns", table);
         }
 

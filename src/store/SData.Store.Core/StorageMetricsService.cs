@@ -54,11 +54,18 @@ public sealed class StorageMetricsService(
         {
             using var connection = connections.CloneConnection();
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT CAST(coalesce(sum(memory_usage_bytes), 0) AS BIGINT), CAST(coalesce(sum(temporary_storage_bytes), 0) AS BIGINT) FROM duckdb_memory()";
+            command.CommandText = "SELECT tag, memory_usage_bytes, temporary_storage_bytes FROM duckdb_memory()";
             await using var reader = await command.ExecuteReaderAsync(token);
-            await reader.ReadAsync(token);
-            var memory = Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture);
-            var temporary = Convert.ToInt64(reader.GetValue(1), CultureInfo.InvariantCulture);
+            long memory = 0, temporary = 0;
+            var categories = new List<string>();
+            while (await reader.ReadAsync(token))
+            {
+                var bytes = Convert.ToInt64(reader.GetValue(1), CultureInfo.InvariantCulture);
+                var spill = Convert.ToInt64(reader.GetValue(2), CultureInfo.InvariantCulture);
+                memory += bytes;
+                temporary += spill;
+                if (bytes > 0 || spill > 0) categories.Add($"{reader.GetString(0)}={bytes}/{spill}");
+            }
             await reader.DisposeAsync();
             command.CommandText = "SELECT current_setting('memory_limit'), current_setting('threads')";
             await using var config = await command.ExecuteReaderAsync(token);
@@ -68,6 +75,8 @@ public sealed class StorageMetricsService(
                 DuckDbState = "ok", DuckDbSampledAt = DateTimeOffset.UtcNow, TrackedMemoryBytes = memory, TemporaryBytes = temporary,
                 MemoryLimit = config.GetString(0), Threads = Convert.ToInt32(config.GetValue(1), CultureInfo.InvariantCulture),
             };
+            logger.LogDebug("DuckDB resource sample (tracked={TrackedBytes}, spill={SpillBytes}, limit={MemoryLimit}, threads={Threads}, categories={MemoryCategories})",
+                memory, temporary, result.MemoryLimit, result.Threads, string.Join(",", categories));
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception exception)

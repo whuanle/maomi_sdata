@@ -12,6 +12,7 @@ import type { ChartSource as SearchDomain } from '@/api/chartTypes';
  * `field:"多词值"`（等值短语）/ `-field:value`（NOT）/ 裸词或 `"短语"`（body 子串匹配）/
  * 子句间空白 = AND / `OR` 关键字 / 括号分组。JSON 路径字段（attributes.xx.y）经 json_extract_string 提取，
  * 整个后缀按字面单层 key 处理（点分 key 如 order.no 直取，与后端 QueryDslCompiler 一致）。
+ * `field:*` 表示存在（含数值字段），`-field:*` 表示不存在；引用值支持转义与空字符串。
  * 过滤器树另有 in/nin/exists/nexists 条件构建器（buildFilterConditionSql）。
  */
 
@@ -60,6 +61,11 @@ type Node =
   | { type: 'not'; child: Node }
   | { type: 'condition'; sql: string };
 
+/** 引用值只解码已支持的转义，兼容既有含普通反斜杠的查询. */
+function unquote(value: string): string {
+  return value.slice(1, -1).replace(/\\(u[0-9a-fA-F]{4}|["\\/bfnrt])/g, (match) => JSON.parse(`"${match}"`) as string);
+}
+
 /** 词法分析：产出 word/phrase/括号单元；word 内允许引号包裹空格（field:"multi word"）. */
 function tokenize(input: string): Token[] {
   const tokens: Token[] = [];
@@ -84,12 +90,18 @@ function tokenize(input: string): Token[] {
     }
 
     if (c === '"') {
-      const close = input.indexOf('"', i + 1);
+      let close = i + 1;
+      while (close < input.length) {
+        if (input[close] === '\\') { close += 2; continue; }
+        if (input[close] === '"') break;
+        close++;
+      }
+      if (close >= input.length) close = -1;
       if (close < 0) {
         throw new LuceneCompileError('引号未闭合：短语搜索需要成对的英文双引号');
       }
 
-      tokens.push({ kind: 'phrase', text: input.slice(i + 1, close) });
+      tokens.push({ kind: 'phrase', text: unquote(input.slice(i, close + 1)) });
       i = close + 1;
       continue;
     }
@@ -378,14 +390,20 @@ function buildTerm(token: Token, domain: SearchDomain, params: SearchSqlParamete
   }
 
   const meta = resolveField(field, domain, params);
-  const inQuote = rawValue.startsWith('"') && rawValue.endsWith('"') && rawValue.length >= 2;
-  const value = inQuote ? rawValue.slice(1, -1) : rawValue;
-  if (value.length === 0) {
-    throw new LuceneCompileError(`字段 ${field} 缺少值（如 ${field}:error）`);
-  }
+  if (rawValue === '*') return { type: 'condition', sql: `${meta.expression} IS NOT NULL` };
 
-  // 数值比较：field:>n / >=n / <n / <=n
-  const compareMatch = value.match(/^(>=|<=|>|<)\s*(.+)$/);
+  // 引用值两侧的星号由侧栏 contains/prefix 序列化使用；引号里的星号始终是字面值.
+  const contains = rawValue.startsWith('*"') && rawValue.endsWith('"*');
+  const prefix = rawValue.startsWith('"') && rawValue.endsWith('"*');
+  if (contains || prefix) {
+    const literal = unquote(rawValue.slice(contains ? 1 : 0, -1));
+    return { type: 'condition', sql: buildFilterConditionSql(field, contains ? 'contains' : 'prefix', literal, domain, params) };
+  }
+  const inQuote = rawValue.startsWith('"') && rawValue.endsWith('"') && rawValue.length >= 2;
+  const value = inQuote ? unquote(rawValue) : rawValue;
+
+  // 数值比较：引用值不解释比较符（例如 service:">api" 是字面值）.
+  const compareMatch = !inQuote && value.match(/^(>=|<=|>|<)\s*(.+)$/);
   if (compareMatch) {
     return buildCondition(meta, compareMatch[1], compareMatch[2].trim(), params);
   }

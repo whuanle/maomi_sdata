@@ -308,9 +308,17 @@ public class DuckDbOptions
     public string MemoryLimit { get; set; } = "512MB";
 
     /// <summary>
-    /// 线程数，0 = 自动.
+    /// 线程数，默认 2，0 = 自动.
     /// </summary>
-    public int Threads { get; set; }
+    public int Threads { get; set; } = 2;
+
+    /// <summary>
+    /// 同时执行的查询数（1–32），默认 1，降低小内存部署的查询资源竞争.
+    /// </summary>
+    public int MaxConcurrentQueries { get; set; } = 1;
+
+    /// <summary>分析查询预算（秒，1–300），包含准入等待及原生执行.</summary>
+    public int QueryTimeoutSeconds { get; set; } = 30;
 
     /// <summary>
     /// 临时目录（溢出用），空则使用系统默认.

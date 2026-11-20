@@ -70,6 +70,7 @@ public partial class AnalyticsExecutor : IAnalyticsExecutor
             return new AlertCountResult(0, false);
         }
 
+        using var queryLease = await _connectionManager.LockQueryAsync(cancellationToken);
         // DuckDB 的异步 API 底层同步执行。计时器持续中断专属连接，覆盖取消先于执行的竞争窗口。
         return await Task.Run(() =>
         {
@@ -216,7 +217,29 @@ public partial class AnalyticsExecutor : IAnalyticsExecutor
     /// <returns>结果.</returns>
     private async Task<AnalyticsQueryResult> ExecuteCoreAsync(string sql, IReadOnlyList<DuckDBParameter>? parameters, int rowLimit, CancellationToken cancellationToken)
     {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_systemOptions.DuckDb.QueryTimeoutSeconds, 1, 300)));
+        try
+        {
+            return await ExecuteBoundedAsync(sql, parameters, rowLimit, budget.Token);
+        }
+        catch (Exception exception) when (budget.IsCancellationRequested && exception is OperationCanceledException or DuckDBException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _logger.LogWarning("Analytics query exceeded execution budget");
+            throw BusinessException.Throw(408, "分析查询超时，请缩小时间范围或简化查询");
+        }
+        catch (DuckDBException exception)
+        {
+            _connectionManager.LogResourceFailure(exception, "analytics");
+            throw;
+        }
+    }
+
+    private async Task<AnalyticsQueryResult> ExecuteBoundedAsync(string sql, IReadOnlyList<DuckDBParameter>? parameters, int rowLimit, CancellationToken cancellationToken)
+    {
         rowLimit = Math.Clamp(rowLimit, 1, 10_000);
+        using var queryLease = await _connectionManager.LockQueryAsync(cancellationToken);
 
         // 驱动的异步调用底层同步执行；独立工作线程和周期 Cancel 确保截止时间中断原生查询。
         return await Task.Run(async () =>
@@ -225,7 +248,16 @@ public partial class AnalyticsExecutor : IAnalyticsExecutor
         var started = DateTimeOffset.UtcNow;
         await using var connection = _connectionManager.CloneConnection();
         await using var command = ((DuckDBConnection)connection).CreateCommand();
-        command.CommandText = sql;
+        var limitName = "sdata_result_limit";
+        while (sql.Contains("$" + limitName, StringComparison.OrdinalIgnoreCase)
+            || parameters?.Any(parameter => string.Equals(parameter.ParameterName.TrimStart('$'), limitName, StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            limitName += "_";
+        }
+
+        command.CommandText = $"SELECT * FROM (\n{sql}\n) AS sdata_bounded_result LIMIT CAST(${limitName} AS BIGINT)";
+        command.UseStreamingMode = true;
+        command.Parameters.Add(new DuckDBParameter(limitName, rowLimit + 1));
         if (parameters != null)
         {
             foreach (var parameter in parameters)

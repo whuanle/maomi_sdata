@@ -61,6 +61,7 @@ public class MqConsumptionTests
             new() { Id = id, Enabled = true, Topics = [new() { Name = "logs" }] },
             new() { Id = id + 1, Enabled = false },
         ];
+        public DuckDbSettings GetDuckDb() => new();
         public S3Options GetS3() => new();
         public RetentionPlanOptions GetRetention() => new();
         public CompressionOptions GetCompression() => new();

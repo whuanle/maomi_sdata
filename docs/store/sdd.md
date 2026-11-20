@@ -8,23 +8,28 @@
 
 ## 组件
 
-- `DuckDbConnectionManager`：单例持有数据库实例；写信号量串行化 DDL/Appender；读路径用同实例新连接（DuckDB 实例缓存）；启动时 `SET memory_limit/threads/temp_directory/preserve_insertion_order=false` 并加载表清单缓存。
+- `DuckDbConnectionManager`：单例持有数据库实例；写门串行化 DDL、后台写及完整 Appender 事务（表门→建表→写门，门内不重入）；查询门覆盖通用查询、DSL、分析 SQL/搜索及告警计数的执行和结果读取，默认并发 1（配置钳位 1–32），独立连接不与后台写共享主连接。线程默认 2，显式 0 仍自动；查询门与写门独立，不保证单个重查询不会耗尽内存。
 - `TimeTables`：按天表名（`logs_/traces_/metrics_/iot_yyyymmdd`）与幂等建表 SQL（traces 建 trace_id ART 索引）。
-- `IngestBuffer`（有界 Channel）+ `IngestWriterService`（~200ms/5000 条聚合，按类型+天分组 Appender 写入）。
-- `LogStore / TraceStore / MetricStore / TelemetryStore`：跨天 UNION ALL 查询（全参数绑定），聚合分桶 `epoch_ms(ts) // step * step`。
+- `IngestBuffer`（有界 Channel）+ `IngestWriterService`（~200ms/5000 条聚合，按类型+天分组 Appender 写入）；分组时按（类型, UTC 日）缓存表名，避免为每条记录重复拼接表名字符串。
+- `LogStore / TraceStore / MetricStore / TelemetryStore`：跨天 UNION ALL 查询（全参数绑定），聚合分桶 `epoch_ms(ts) // step * step`。`LogStore` 的分页经 `LIMIT $limit OFFSET $offset` 下推到 SQL，调用方传入的 `LogQuery.Offset` 决定跳过条数，不在内存 Skip。
+- `IStoreInfo.CountTablesAsync`：把多张当日表合并为单条 `UNION ALL` count 查询，供 Monitor 总览批量取今日行数，减少查询门获取与连接克隆次数。
 - `SearchSqlExpander` 支持 `{{sessions}}` / `{{rum_events}}` → RUM 会话/事件内部天表，统一冷热解析、时间与命名参数绑定及查询跨度上限；Agent 提供结构化白名单查询，不开放任意 SQL，见 [Agents设计](../agents/sdd.md)。
 - `AnalyticsExecutor`：只读执行器（单条 SELECT/WITH、写关键字黑名单、行数上限、DateTime/BigInteger 归一化）。[告警计数](../alerts/sdd.md) 使用单域热数据、有界计数和专属连接原生中断，不触发冷层读取。
-- `RetentionService`：每小时 DROP 过期天表 + CHECKPOINT。
+- `RetentionService`：每小时 DROP 过期天表、清理超过指标热+冷总保留期的 rollup 桶（非正热保留为永久）并 CHECKPOINT。
+- `RollupService`：30秒周期，5m/1h窗口按桶分段，查询门→写门内先生成临时汇总，再单事务DELETE/INSERT替换；计算/取消失败不提前删除旧桶。移除高频删插写放大的两个复合ART索引，旧库启动幂等DROP索引，不删业务表。
 - 消费采样的 `diagnostics` 保存有界阶段摘要，旧日表启动幂等补列；共享写入器故障通过缓冲发布安全分类和恢复时间，不返回原始异常。
 - 消费通知冷却与投递摘要属于SQLite元数据（`mq_notification_state`），启动由SchemaReconciler只增补表；不写入观测日志表，不随消费会话重建清零。通知预算及边界见 [Ingest设计](../ingest/sdd.md)。
 - 消费统计 `mq_consumption_yyyymmdd`：10 秒累计快照，经统一缓冲/Appender 写入，实例/规则/会话隔离；历史不得逐采样求和。沿用日志热保留天数，但不参与日志归档；查询仅经 Monitor 的管理员入口。
+- 资源故障的现场证据、可复现实验及剩余限制见 [内存复盘](memory-root-cause.md)；不是靠加配额或隐藏故障防复发。
 - `IStorageMetrics` / `StorageMetricsService`：每 15 秒只读采集 DuckDB 追踪内存、溢出、实际配置、主文件/WAL 与数据/临时目录所在卷容量；不执行 CHECKPOINT。失败保留有状态和成功时间的旧值。
 - `S3MetricsSampler`：有效设置驱动客户端，每 10 分钟只读分页列举桶/前缀当前对象，30 秒预算，失败一分钟后重试；配置指纹变化立即隔离旧值。只发布完整总量，不含版本历史、服务端剩余空间或原始 SDK 异常。
+
+- `IDuckDbRuntimeSettings`（Settings.Shared）由连接管理器实现：写门内参数绑定调整实例级内存并读回发布快照，已有/新连接共享；启动在结构引导前应用持久化覆盖。设置协调和失败恢复见 [Settings设计](../settings/sdd.md#duckdb-内存)。
 
 ## 关键决策
 
 1. 按天分表而非单表+DELETE：保留=DROP，秒级释放；写入天然冷热分离。
-2. 同步接入 TryWrite 满载返回 false 并计数（429 提示），有界 Channel 使用 Wait 模式确保并发判满原子。MQ 采用异步 WriteAsync + 持久化回执，批量事务提交后才确认；失败批次保留重试，进程取消不伪报成功。日志 Appender 按库内实际列序写入，兼容旧表补列。
+2. 同步接入 TryWrite 满载返回 false 并计数（429 提示），有界 Channel 使用 Wait 模式确保并发判满原子。MQ 采用异步 WriteAsync + 持久化回执，批量事务提交后才确认；失败批次保留重试，进程取消不伪报成功。日志 Appender 按库内实际列序写入，兼容旧表补列；首次以空投影读取并校验列名集合后缓存，补列、冻结和删除/重建失效，不逐批扫描系统目录。
 3. 用户 SQL 独立执行器收口，黑名单 + 只读连接 + 行上限（注：字符串字面量含黑名单词会被误拒，属可接受 trade-off，见 sop）。
 4. 全文检索 = 原文子串匹配（`body LIKE '%输入%'`，EscapeLike 转义 `%_\`，所见即所搜、中文免分词）；不做 ES 式行级倒排（基准实测 100 万行 7ms / 1000 万行 41ms，热层已近内存带宽极限），向 ES 靠齐走渐进路线：天级词项索引 → 分片级索引 → 查询语法子集 → BM25（超大规模场景指向 OpenObserve 等专业系统，单机内网不做行级倒排）。
 5. 日志冷层对象带词项索引 sidecar（token + CJK 二元组存在性索引）：归档时构建、本地镜像常驻（`data/cold-idx/`，365 天仅数百 MB），关键词查询先扫本地索引裁候选分片再拉对象——索引是超集过滤，对象内 LIKE 精确匹配，语义不变。

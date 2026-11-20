@@ -3,21 +3,33 @@ using DuckDB.NET.Data;
 using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Store;
+using SData.Settings;
 
 namespace SData.Store.Core;
 
 /// <summary>
 /// DuckDB 连接管理器（单进程持有数据库实例，写串行 + 读克隆连接）.
 /// </summary>
-public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
+public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRuntimeSettings
 {
     private readonly DuckDbOptions _options;
     private readonly S3Options _s3;
     private readonly ILogger<DuckDbConnectionManager> _logger;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly SemaphoreSlim _queryLock;
+    private readonly ConcurrentDictionary<string, string[]> _logColumns = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _tables = new(StringComparer.OrdinalIgnoreCase);
     private DuckDBConnection? _master;
     private int _disposed;
+    private long _lastResourceDiagnosticTicks;
+    private sealed record MemoryState(string Configured, string Effective);
+    private MemoryState _memory = new(string.Empty, string.Empty);
+
+    /// <inheritdoc/>
+    public string MemoryLimit => Volatile.Read(ref _memory).Configured;
+
+    /// <inheritdoc/>
+    public string EffectiveMemoryLimit => Volatile.Read(ref _memory).Effective;
     private readonly ArchiveCoordination _archiveCoordination = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _tableLocks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _publishedSnapshots = new(StringComparer.Ordinal);
@@ -31,6 +43,77 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
         var gate = _tableLocks.GetOrAdd(table, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(token);
         return new ArchiveCoordination.Lease(() => gate.Release());
+    }
+
+    /// <summary>查询准入覆盖执行及结果读取；等待期间允许取消，不占用写入门.</summary>
+    internal async Task<IDisposable> LockQueryAsync(CancellationToken token)
+    {
+        await _queryLock.WaitAsync(token);
+        return new ArchiveCoordination.Lease(() => _queryLock.Release());
+    }
+
+    /// <summary>批量事务与 DDL/后台写共用写门；调用前完成建表，门内不得重入写接口.</summary>
+    internal async Task<IDisposable> LockWriteAsync(CancellationToken token)
+    {
+        await _writeLock.WaitAsync(token);
+        return new ArchiveCoordination.Lease(() => _writeLock.Release());
+    }
+
+    /// <summary>资源失败时限频采集类别，不记录 SQL、参数或业务内容.</summary>
+    internal void LogResourceFailure(Exception exception, string operation)
+    {
+        if (exception is not DuckDBException && exception is not OutOfMemoryException) return;
+        var now = DateTimeOffset.UtcNow.UtcTicks;
+        var previous = Interlocked.Read(ref _lastResourceDiagnosticTicks);
+        if (now - previous < TimeSpan.FromSeconds(30).Ticks
+            || Interlocked.CompareExchange(ref _lastResourceDiagnosticTicks, now, previous) != previous) return;
+        try
+        {
+            using var connection = CloneConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT tag, memory_usage_bytes, temporary_storage_bytes FROM duckdb_memory()";
+            using var reader = command.ExecuteReader();
+            var categories = new List<string>();
+            while (reader.Read())
+            {
+                var memory = reader.GetInt64(1);
+                var spill = reader.GetInt64(2);
+                if (memory > 0 || spill > 0) categories.Add($"{reader.GetString(0)}={memory}/{spill}");
+            }
+
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            _logger.LogWarning("DuckDB operation failed (operation={Operation}, effective_limit={EffectiveLimit}, private_bytes={PrivateBytes}, categories={MemoryCategories})",
+                operation, EffectiveMemoryLimit, process.PrivateMemorySize64, string.Join(",", categories));
+        }
+        catch (Exception diagnosticFailure)
+        {
+            _logger.LogWarning("DuckDB resource diagnostics unavailable (operation={Operation}, error_type={ErrorType})",
+                operation, diagnosticFailure.GetType().Name);
+        }
+    }
+
+    internal void InvalidateLogColumns(string table) => _logColumns.TryRemove(table, out _);
+
+    internal async Task<IReadOnlyList<string>> GetLogColumnsAsync(DuckDBConnection connection, string table, CancellationToken token)
+    {
+        if (_logColumns.TryGetValue(table, out var columns))
+        {
+            return columns;
+        }
+
+        // 表名由 TimeTables 生成；只准备空投影，避免每批扫描、排序整个系统目录。
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT * FROM {table} LIMIT 0";
+        using var reader = await command.ExecuteReaderAsync(token);
+        columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
+        string[] expected = ["id", "ts", "service", "severity", "body", "trace_id", "span_id", "attributes", "resource", "source"];
+        if (columns.Length != expected.Length || !columns.ToHashSet(StringComparer.Ordinal).SetEquals(expected))
+        {
+            throw new InvalidOperationException("日志表列布局不受支持，请检查表结构");
+        }
+
+        _logColumns[table] = columns;
+        return columns;
     }
 
     internal void HidePublishedSnapshot(string table) => _publishedSnapshots.TryAdd(table, 0);
@@ -53,6 +136,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
 
         await ExecuteWriteAsync($"ALTER TABLE {table} RENAME TO {snapshot}", cancellationToken: token);
         _tables.TryRemove(table, out _);
+        InvalidateLogColumns(table);
         _tables.TryAdd(snapshot, 0);
         return snapshot;
     }
@@ -65,6 +149,8 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
     public DuckDbConnectionManager(SystemOptions options, ILogger<DuckDbConnectionManager> logger)
     {
         _options = options.DuckDb;
+        var maxQueries = Math.Clamp(_options.MaxConcurrentQueries, 1, 32);
+        _queryLock = new SemaphoreSlim(maxQueries, maxQueries);
         _s3 = options.S3;
         _logger = logger;
     }
@@ -73,8 +159,9 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
     /// 初始化：打开主连接、应用运行参数、加载表清单.
     /// </summary>
     /// <param name="cancellationToken">取消.</param>
+    /// <param name="memoryLimit">启动时的持久化覆盖；空则使用文件默认.</param>
     /// <returns>Task.</returns>
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default, string? memoryLimit = null)
     {
         var dbPath = Path.Combine(AppConst.GetPath(), _options.Path.Replace('\\', '/'));
         var dbDirectory = Path.GetDirectoryName(dbPath);
@@ -86,7 +173,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
         _master = new DuckDBConnection($"Data Source={dbPath}");
         await _master.OpenAsync(cancellationToken);
 
-        await ExecuteUnsafeAsync($"SET memory_limit='{_options.MemoryLimit}'");
+        await ApplyMemoryLimitAsync(memoryLimit ?? _options.MemoryLimit, cancellationToken);
         if (_options.Threads > 0)
         {
             await ExecuteUnsafeAsync($"SET threads={_options.Threads}");
@@ -112,7 +199,28 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
             _tables.TryAdd(table, 0);
         }
 
-        _logger.LogInformation("DuckDB initialized at {Path} with {TableCount} tables (memory_limit={MemoryLimit})", dbPath, _tables.Count, _options.MemoryLimit);
+        await using var config = _master.CreateCommand();
+        config.CommandText = "SELECT current_setting(\'threads\')";
+        var threads = Convert.ToInt32(await config.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+        _logger.LogInformation("DuckDB initialized at {Path} with {TableCount} tables (memory_limit={MemoryLimit}, effective_limit={EffectiveLimit}, threads={Threads}, max_queries={MaxQueries})",
+            dbPath, _tables.Count, MemoryLimit, EffectiveMemoryLimit, threads, Math.Clamp(_options.MaxConcurrentQueries, 1, 32));
+    }
+
+    /// <inheritdoc/>
+    public async Task ApplyMemoryLimitAsync(string memoryLimit, CancellationToken cancellationToken)
+    {
+        if (!DuckDbMemoryLimit.TryNormalize(memoryLimit, out var normalized))
+        {
+            throw new ArgumentException("DuckDB 内存限制格式无效", nameof(memoryLimit));
+        }
+
+        using var lease = await LockWriteAsync(cancellationToken);
+        await ExecuteUnsafeAsync("SET memory_limit = $limit", [new DuckDBParameter("limit", normalized)], cancellationToken);
+        // SET 已完成后不再响应请求取消，确保读回并发布实际运行值。
+        await using var command = _master!.CreateCommand();
+        command.CommandText = "SELECT current_setting('memory_limit')";
+        var effective = Convert.ToString(await command.ExecuteScalarAsync(CancellationToken.None), System.Globalization.CultureInfo.InvariantCulture)!;
+        Volatile.Write(ref _memory, new MemoryState(normalized, effective));
     }
 
     /// <summary>
@@ -180,6 +288,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
                     await ExecuteUnsafeAsync(sql, null, cancellationToken);
                 }
 
+                InvalidateLogColumns(table);
                 _tables.TryAdd(table, 0);
                 _logger.LogDebug("Created DuckDB table {Table}", table);
             }
@@ -236,7 +345,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
     }
 
     /// <summary>
-    /// 执行查询并由 mapper 聚合结果（读主连接，DuckDB 同实例多查询安全）.
+    /// 查询准入后在专属连接执行，由 mapper 聚合结果（不与后台写共享主连接）.
     /// </summary>
     /// <typeparam name="T">结果类型.</typeparam>
     /// <param name="sql">SQL.</param>
@@ -246,9 +355,12 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
     /// <returns>聚合结果.</returns>
     public async Task<T> QueryAsync<T>(string sql, IReadOnlyCollection<DuckDBParameter>? parameters, Func<DbDataReader, Task<T>> mapper, CancellationToken cancellationToken = default)
     {
-        await using var command = _master!.CreateCommand();
+        using var queryLease = await LockQueryAsync(cancellationToken);
+        await using var connection = CloneConnection();
+        await using var command = connection.CreateCommand();
         command.CommandText = sql;
         ApplyParameters(command, parameters);
+        command.UseStreamingMode = true;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await mapper(reader);
     }
@@ -272,6 +384,38 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
 
     /// <inheritdoc/>
     Task<long> IStoreInfo.CountTableAsync(string tableName, CancellationToken cancellationToken) => CountAsync(tableName, cancellationToken);
+
+    /// <inheritdoc/>
+    async Task<IReadOnlyDictionary<string, long>> IStoreInfo.CountTablesAsync(IReadOnlyList<(string Name, string TableName)> tables, CancellationToken cancellationToken)
+    {
+        // 仅统计管理器已知的表（与 CountAsync 语义一致），未知表按 0 计
+        var known = tables.Where(t => _tables.ContainsKey(t.TableName)).ToList();
+        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var (name, _) in tables)
+        {
+            counts[name] = 0;
+        }
+
+        if (known.Count == 0)
+        {
+            return counts;
+        }
+
+        // 单条 UNION ALL：一次查询门获取 + 一次连接克隆，替代 N 次串行 count
+        var branches = known.Select(t => $"SELECT count(*) FROM {t.TableName}");
+        var sql = string.Join(" UNION ALL ", branches);
+        await QueryAsync(sql, null, async reader =>
+        {
+            var index = 0;
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                counts[known[index].Name] = reader.GetInt64(0);
+                index++;
+            }
+            return 0;
+        }, cancellationToken);
+        return counts;
+    }
 
     /// <inheritdoc/>
     IReadOnlyList<string> IStoreInfo.GetTableNames(string prefix) => GetManagedTables(prefix);
@@ -316,6 +460,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
     {
         await ExecuteWriteAsync($"DROP TABLE IF EXISTS {tableName}", cancellationToken: cancellationToken);
         _tables.TryRemove(tableName, out _);
+        InvalidateLogColumns(tableName);
         _logger.LogInformation("Dropped expired DuckDB table {Table}", tableName);
     }
 
@@ -340,6 +485,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo
         {
             _writeLock.Release();
             _writeLock.Dispose();
+            _queryLock.Dispose();
         }
     }
 

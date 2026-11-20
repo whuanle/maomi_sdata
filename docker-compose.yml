@@ -14,6 +14,11 @@ services:
     environment:
       - SDATA_FILE=/app/configs/system.json
       - ASPNETCORE_ENVIRONMENT=Production
+      # GC 默认已在 runtimeconfig 中启用 Server/Concurrent/RetainVM/CpuGroup（吞吐优先）。
+      # 多环境可按容器内存限额按需覆盖（取消注释并调整）；DOTNET_* 环境变量优先于 runtimeconfig。
+      # - DOTNET_GCHeapHardLimitPercent=75   # 容器内存受限时限制堆占比，防 OOM Kill
+      # - DOTNET_gcServer=0                  # 小内存/低并发环境可退回 Workstation GC
+      # - DOTNET_gcConcurrent=0              # 优先降低 CPU 占用而非停顿
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5300/health"]
       interval: 30s

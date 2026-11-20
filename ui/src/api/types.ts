@@ -911,8 +911,16 @@ export interface IngestSettings {
   flushIntervalMs: number;
 }
 
+/** DuckDB 内存设置（保存后立即生效）. */
+export interface DuckDbSettings {
+  memoryLimit: string;
+  effectiveMemoryLimit: string;
+}
+
 /** 系统设置响应（GET /settings，管理员）. */
 export interface SettingsResponse {
+  /** 旧版后端尚未提供该字段；缺失时禁用内存配置入口. */
+  duckDb?: DuckDbSettings | null;
   s3: S3Settings;
   retention: RetentionSettings;
   compression: CompressionSettings;

@@ -163,6 +163,93 @@ public class RollupTests
         Assert.Equal(2, series.Points.Count);
     }
 
+    [Fact]
+    public async Task Backfill_CancelBeforeReplacement_PreservesPreviousResults()
+    {
+        using var harness = new RollupHarness();
+        var time = RollupHarness.Closed5mBucketTime();
+        await harness.Writer.FlushAsync([new(IngestKind.Metric, new MetricPointRecord { Name = "retained", Timestamp = time, Value = 7 })], harness.Token);
+        await harness.Service.BackfillAsync(harness.Token);
+        using var writeLease = await harness.Manager.LockWriteAsync(harness.Token);
+        using var stop = new CancellationTokenSource();
+        var pending = harness.Service.BackfillAsync(stop.Token);
+        Assert.False(pending.IsCompleted);
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        writeLease.Dispose();
+        var rows = await harness.Manager.QueryAsync($"SELECT sum(\"sum\") FROM {TimeTables.Rollup5mTable} WHERE name = $name",
+            [new DuckDB.NET.Data.DuckDBParameter("name", "retained")], async reader =>
+            {
+                await reader.ReadAsync();
+                return reader.GetDouble(0);
+            });
+        Assert.Equal(7, rows);
+        await harness.Service.BackfillAsync(harness.Token).WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task Backfill_InsertFailure_RollsBackDeletedBucket()
+    {
+        using var harness = new RollupHarness();
+        var time = RollupHarness.Closed5mBucketTime();
+        await harness.Writer.FlushAsync([new(IngestKind.Metric, new MetricPointRecord { Name = "atomic", Timestamp = time, Value = 7 })], harness.Token);
+        await harness.Service.BackfillAsync(harness.Token);
+        await harness.Manager.ExecuteWriteAsync($"CREATE UNIQUE INDEX rollback_probe ON {TimeTables.Rollup5mTable}(name, labels_hash, bucket_ts)");
+        await harness.Writer.FlushAsync([new(IngestKind.Metric, new MetricPointRecord { Name = "atomic", Timestamp = time, LabelsJson = string.Empty, Value = 9 })], harness.Token);
+        await Assert.ThrowsAsync<DuckDB.NET.Data.DuckDBException>(() => harness.Service.BackfillAsync(harness.Token));
+        var value = await harness.Manager.QueryAsync($"SELECT sum(\"sum\") FROM {TimeTables.Rollup5mTable} WHERE name = 'atomic'", null,
+            async reader => { await reader.ReadAsync(); return reader.GetDouble(0); });
+        Assert.Equal(7, value);
+    }
+
+    [Fact]
+    public async Task RollupRetention_RemovesExpiredBucketsButKeepsBoundaryAndPermanent()
+    {
+        using var harness = new RollupHarness();
+        var today = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
+        foreach (var table in new[] { TimeTables.Rollup5mTable, TimeTables.Rollup1hTable })
+        {
+            await harness.Manager.ExecuteWriteAsync($"INSERT INTO {table} VALUES ('old', '', NULL, $old, 1, 1, 1, 1), ('boundary', '', NULL, $boundary, 2, 2, 2, 1)",
+                [new DuckDB.NET.Data.DuckDBParameter("old", today.AddDays(-8).UtcDateTime), new DuckDB.NET.Data.DuckDBParameter("boundary", today.AddDays(-7).UtcDateTime)]);
+        }
+        await RetentionService.PruneRollupsAsync(harness.Manager, today, 0, harness.Token);
+        await RetentionService.PruneRollupsAsync(harness.Manager, today, 7, harness.Token);
+        foreach (var table in new[] { TimeTables.Rollup5mTable, TimeTables.Rollup1hTable })
+        {
+            Assert.Equal(1, await harness.Manager.QueryAsync($"SELECT count(*) FROM {table} WHERE name = 'boundary'", null, async reader => { await reader.ReadAsync(); return reader.GetInt64(0); }));
+            Assert.Equal(1, await harness.Manager.QueryAsync($"SELECT count(*) FROM {table}", null, async reader => { await reader.ReadAsync(); return reader.GetInt64(0); }));
+        }
+    }
+
+    [Fact]
+    public async Task RepeatedBackfill_StaysBounded_AndRestartDropsLegacyIndexes()
+    {
+        using var harness = new RollupHarness();
+        var time = RollupHarness.Closed5mBucketTime();
+        var batch = Enumerable.Range(0, 2000).Select(index => new IngestItem(IngestKind.Metric,
+            new MetricPointRecord { Name = "bounded", LabelsJson = "{\"series\":" + index + "}", Timestamp = time, Value = index })).ToList();
+        await harness.Writer.FlushAsync(batch, harness.Token);
+        for (var iteration = 0; iteration < 30; iteration++)
+            await harness.Service.BackfillAsync(harness.Token);
+        await harness.Manager.ExecuteWriteAsync("CHECKPOINT");
+        var path = Path.Combine(harness.TempDirectory, "rollup-test.duckdb");
+        Assert.True(new FileInfo(path).Length < 16 * 1024 * 1024, "重复覆盖同一批汇总不应持续放大文件");
+        await harness.Manager.ExecuteWriteAsync($"CREATE INDEX metrics_rollup_5m_qidx ON {TimeTables.Rollup5mTable}(name, labels_hash, bucket_ts)");
+        await harness.Manager.DisposeAsync();
+        var options = new SystemOptions();
+        options.DuckDb.Path = path;
+        await using var restarted = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
+        await restarted.InitializeAsync();
+        var bootstrapper = new DuckDbSchemaBootstrapper(restarted, NullLogger<DuckDbSchemaBootstrapper>.Instance);
+        await bootstrapper.ApplyAsync();
+        await bootstrapper.ApplyAsync();
+        Assert.Equal(0, await restarted.QueryAsync("SELECT count(*) FROM duckdb_indexes() WHERE index_name LIKE 'metrics_rollup_%_qidx'", null,
+            async reader => { await reader.ReadAsync(); return reader.GetInt64(0); }));
+        await new RollupService(restarted, NullLogger<RollupService>.Instance).BackfillAsync(harness.Token);
+        Assert.Equal(2000, await restarted.QueryAsync($"SELECT count(*) FROM {TimeTables.Rollup5mTable}", null,
+            async reader => { await reader.ReadAsync(); return reader.GetInt64(0); }));
+    }
+
     /// <summary>rollup 测试夹具：临时库 + 写入器 + RollupService（BackfillAsync 内部方法直调）.</summary>
     private sealed class RollupHarness : IDisposable
     {

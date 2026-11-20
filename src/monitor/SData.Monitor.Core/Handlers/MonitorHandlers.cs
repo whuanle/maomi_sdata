@@ -2,6 +2,7 @@ using System.Diagnostics;
 using MediatR;
 using SData.Infra.Configuration;
 using SData.Store;
+using SData.Settings;
 using SData.Store.Core;
 
 namespace SData.Monitor.Handlers;
@@ -15,6 +16,7 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
     private readonly IStoreInfo _storeInfo;
     private readonly SystemOptions _systemOptions;
     private readonly ResourceSampler _resources;
+    private readonly IDuckDbRuntimeSettings _duckDb;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="QueryStatusCommandHandler"/> class.
@@ -22,12 +24,13 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
     /// <param name="buffer">接入缓冲.</param>
     /// <param name="storeInfo">存储信息.</param>
     /// <param name="systemOptions">系统配置.</param>
-    public QueryStatusCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ResourceSampler resources)
+    public QueryStatusCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ResourceSampler resources, IDuckDbRuntimeSettings duckDb)
     {
         _buffer = buffer;
         _storeInfo = storeInfo;
         _systemOptions = systemOptions;
         _resources = resources;
+        _duckDb = duckDb;
     }
 
     /// <inheritdoc/>
@@ -46,10 +49,11 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
             ThreadCount = process.Threads.Count,
             Os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
             Buffer = _buffer.GetStats(),
-            DuckDbMemoryLimit = _systemOptions.DuckDb.MemoryLimit,
+            DuckDbMemoryLimit = _duckDb.EffectiveMemoryLimit,
         };
 
         var today = DateTimeOffset.UtcNow;
+        var todayTables = new List<(string Name, string TableName)>();
         foreach (var (prefix, name) in new[]
                  {
                      (TimeTables.LogsPrefix, "logs"),
@@ -60,11 +64,13 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
         {
             var tables = _storeInfo.GetTableNames(prefix);
             response.TableCounts[name] = tables.Count;
+            todayTables.Add((name, TimeTables.Name(prefix, today)));
+        }
 
-            var todayTable = TimeTables.Name(prefix, today);
-            response.TodayRows[name] = tables.Contains(todayTable)
-                ? await _storeInfo.CountTableAsync(todayTable, cancellationToken)
-                : 0;
+        var todayRows = await _storeInfo.CountTablesAsync(todayTables, cancellationToken);
+        foreach (var (name, rows) in todayRows)
+        {
+            response.TodayRows[name] = rows;
         }
 
         return response;

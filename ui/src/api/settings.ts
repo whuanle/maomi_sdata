@@ -2,6 +2,7 @@ import { del, get, post, put } from './client';
 import type { MqttAuthSettings, SaveMqttAuthSettings, NotificationChannel, SaveNotificationChannel, NotificationSendResult } from './types';
 import type {
   CompressionSettings,
+  DuckDbSettings,
   MqInstance,
   MqParsePreviewRequest,
   MqParsePreviewResult,
@@ -27,6 +28,11 @@ export const S3_SECRET_MASK = '******';
 /** 系统设置（管理员；SecretKey 掩码返回）. */
 export function fetchSettings() {
   return get<SettingsResponse>('/settings');
+}
+
+/** 保存 DuckDB 内存限制（立即生效）. */
+export function saveDuckDbSettings(body: Pick<DuckDbSettings, 'memoryLimit'>) {
+  return put<DuckDbSettings>('/settings/duckdb', body);
 }
 
 /** 保存 S3 冷存储设置（立即重建 SECRET，立即生效）. */

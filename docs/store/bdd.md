@@ -4,6 +4,68 @@
 
 Feature: DuckDB 观测数据存储
 
+  @STORE-S36 @auto:xunit
+  Scenario: 持续回填和重启不重复放大汇总存储
+    Given 同一批指标反复参与汇总
+    When 连续回填并重新打开数据库
+    Then 汇总数值幂等且存储增长受控，旧版写放大索引在引导时移除
+
+  @STORE-S37 @auto:xunit
+  Scenario: 汇总替换失败保留原结果且过期汇总被清理
+    Given 汇总桶已有完整结果且部分桶超过指标总保留期
+    When 新计算失败或取消并执行保留清理
+    Then 原桶不被提前删除，只有过期桶被清理且保留期边界仍可查询
+
+  @STORE-S38 @auto:xunit
+  Scenario: 固定内存下接入查询聚合与整理混合运行
+    Given 实例使用固定内存预算
+    When 持续交错接入、宽结果查询、汇总和存储整理
+    Then 日志完整提交且查询名额释放，数据库持续可用而不依赖重启
+
+
+  @STORE-MEM1 @auto:xunit
+  Scenario: 调整内存限制共享到所有查询连接
+    Given 数据库已有打开的查询连接
+    When 管理员调大内存限制或调整为较小值
+    Then 已有及新连接均读取新的实例限制，线程配置不变且非法容量被拒绝
+
+  @STORE-MEM2 @auto:xunit
+  Scenario: 重启恢复管理员保存的内存限制
+    Given 管理员已保存不同于文件默认的内存限制
+    When 服务重新初始化数据库
+    Then 引导存储结构前应用保存值且文件默认保持不变
+
+  @STORE-S31 @auto:xunit
+  Scenario: 查询资源受限且不阻塞批量接入
+    Given 小内存实例已达到查询并发上限
+    When 新查询等待准入或取消且日志进入缓冲
+    Then 等待查询不执行且取消释放等待，日志仍可提交，结果读取期间保留查询名额
+
+  @STORE-S32 @auto:xunit
+  Scenario: 批量事务与后台存储写入互斥
+    Given 存储写入门正在使用
+    When 日志批次或存储整理等待写入且取消
+    Then 不开始并行写事务且释放等待的表锁，后续批次可正常提交
+
+  @STORE-S33 @auto:xunit
+  Scenario: 内存失败重试不提前确认消息
+    Given 某日志批次在提交前发生临时失败
+    When 故障消除且原批次重试成功
+    Then 失败时无部分落库与成功回执，重试保留记录标识且提交后才完成回执
+
+  @STORE-S34 @auto:xunit
+  Scenario: 日志列布局缓存随分区生命周期更新
+    Given 日志分区已经缓存实际列序
+    When 分区冻结或删除后重建
+    Then 丢弃旧缓存并按新分区实际列序继续追加
+
+  @STORE-S35 @auto:xunit
+  Scenario: 存储资源故障安全分类
+    Given 存储出现内存不足、数据库失效或读写故障
+    When 查看共享写入器故障快照
+    Then 返回对应安全原因且不含异常原文，数据库失效明确提示检查日志并重启
+
+
   @STORE-AGENT1 @auto:xunit
   Scenario: 只读分析统一读取浏览器事件冷热分区
     Given 浏览器事件和其他观测数据跨日保存在冷热层
@@ -81,6 +143,12 @@ Feature: DuckDB 观测数据存储
     Given 服务已启动且 DuckDB 建库完成
     When 接入一条 svc-a 的 ERROR 日志 body 含 "boom"
     Then 按服务 svc-a 与关键字 boom 查询应返回该日志
+
+  @STORE-S1 @auto:xunit
+  Scenario: 日志查询分页下推到 SQL
+    Given 同一服务在近一分钟内写入多条按时间倒序的日志
+    When 以 Limit=2 分别请求 Offset=0 与 Offset=2
+    Then 第一页返回最新两条，第二页返回之后两条，不发生内存跳过导致空页
 
   @STORE-S2 @auto:xunit
   Scenario: 链路写入后可还原完整 trace 与统计

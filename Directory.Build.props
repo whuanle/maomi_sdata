@@ -21,7 +21,10 @@
 
 	<PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
 		<DebugSymbols>true</DebugSymbols>
-		<DebugType>full</DebugType>
+		<!-- 可移植 PDB：跨平台可读，避免完整 Windows PDB 拖慢构建与膨胀产物；保留供生产排障 -->
+		<DebugType>portable</DebugType>
+		<!-- 发布构建显式开启优化（分层 PGO/GC 见 runtimeconfig.template.json；ReadyToRun 见发布工作流） -->
+		<Optimize>true</Optimize>
 	</PropertyGroup>
 
 	<PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">

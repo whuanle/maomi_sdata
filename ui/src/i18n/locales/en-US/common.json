@@ -1072,6 +1072,15 @@
     "liveMiniHeatmap": "Live heatmap (per page)"
   },
   "settings": {
+    "tabDuckDb": "DuckDB",
+    "duckDbTitle": "DuckDB memory limit",
+    "duckDbUnavailable": "The current backend does not provide DuckDB memory settings. Update and restart the backend service, then retry.",
+    "duckDbHint": "Applies immediately and persists across restarts. This is not a limit on total process memory. Leave headroom for the host or container, ingest buffers and other components. Lowering this limit may not immediately reduce process memory.",
+    "duckDbEffective": "Currently effective",
+    "duckDbMemoryLimit": "Memory limit",
+    "duckDbUnits": "For example 512MB, 2GB or 1.5GiB. MB/GB use decimal units; MiB/GiB use binary units.",
+    "duckDbInvalid": "Enter a valid positive capacity (MB/GB/MiB/GiB), for example 2GB",
+    "duckDbSaved": "DuckDB memory limit saved and applied",
     "loadFailed": "Unable to load settings. Please retry.",
     "retry": "Retry",
     "status": "Service status",
@@ -1182,6 +1191,7 @@
     "mqPendingConfirmation": "Pending confirmation",
     "mqRecentFailures": "Recent failures",
     "mqRecovered": "Recovered",
+    "mqWriterRecovered": "Persistence recovered (past failure)",
     "mqStage": { "connecting": "Connection / discovery", "receive": "Receiving / idle", "parse": "Parsing", "persist": "Persisting", "confirm": "Confirming", "unknown": "Unknown" },
     "mqRequestError": { "timeout": "Status request timed out (8s)", "request": "Status request failed; check network / HTTP status", "response": "Response is not valid JSON", "contract": "Response contract mismatch; check deployed frontend/backend versions" },
     "mqStatusHint": "60-second rates · session counters · at-least-once delivery may duplicate records",

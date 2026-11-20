@@ -23,7 +23,7 @@
 
 - 侧边菜单文案统一读取双语语言包：简体中文显示「仪表盘」「客户端会话」，英语显示「Dashboards」「Client Sessions」；语言切换即时更新，不改变菜单顺序与路由。
 
-- `ExecuteQueryCommand` → `IAnalyticsExecutor`（单语句 SELECT/WITH 校验、写关键字黑名单、行上限 ≤10000、独立查询连接；只读由现有 SQL 校验约束，非数据库级沙箱）。
+- `ExecuteQueryCommand` → `IAnalyticsExecutor`（单语句 SELECT/WITH 校验、写关键字黑名单、行上限 ≤10000（参数化外层 LIMIT N+1 下推、流式读取，不先物化全结果）、独立查询连接；DuckDb.QueryTimeoutSeconds 默认30秒、钳位1–300，覆盖执行器准入及原生计算，超时返回408并中断连接工作；只读由现有 SQL 校验约束，非数据库级沙箱）。
 - `ExecuteSearchSqlCommand`（`POST /api/analytics/search`）→ `IAnalyticsExecutor.ExecuteSearchAsync`：统一搜索 SQL 直查——`{{logs}}/{{traces}}/{{metrics}}/{{iot}}` 表占位符由 `SearchSqlExpander` 在字符串字面量之外展开为区间内现存按天表 UNION ALL（表名只来自 TimeTables 前缀 + 内部日期）；`$start`/`$end` 以 DuckDBParameter 绑定（值来自请求时间范围）；请求可选 `Parameters` 字典绑定其余 `$name` 引用（键小写字母开头 ≤64 个，值仅字符串/数字/布尔/null，全部 DuckDBParameter 绑定、被引用但缺失时 400）；跨度受 MaxQueryDays 约束；区间内占位符无现存天表时短路返回空结果；其余约束同 ExecuteAsync。逻辑来源经 ITableResolver 合并热表与可用冷文件；占位符本身不自动注入行级时间条件。
 - `SaveQuery/QuerySavedQueries/GetSavedQuery/DeleteSavedQuery/ExecuteSavedQuery`：保存查询 CRUD + 按 id 查单条（SQLite），保存前先以 `SELECT * FROM (sql) LIMIT 0` 验证合法性。
 - `SavedQueryEntity.Kind`（`sql`/`search`）：统一搜索页（`/search`）的「保存搜索」复用同一实体——`kind=search` 存 `Definition` JSON（domain/mode/where/fields/orderBy/limit/rangeMs；历史 sql/query 格式仍可打开）而不存 SQL，不经验证器；列表支持按 Kind 过滤；执行通道对 `kind=search` 返回 400（无 SQL 可执行）。
@@ -44,8 +44,9 @@
 
 ## 搜索语法说明
 
-- `LuceneSearchHelp` 在搜索输入框下默认展开，可收起；当前条件明确为编辑草稿，时间范围、过滤器和降噪仍生效。双语示例仅展示，不填入或执行，不改变共享智能提示组件。
-- 示例只覆盖当前编译器支持的子集：裸词/短语子串、字段等值、末尾星号前缀、负号排除、空格连接和 OR；存在性指引侧栏，不宣称支持通用通配符；编译器现已支持显式 AND/NOT。说明不写入 URL 或保存快照，SQL 模式隐藏。
+- 搜索框经 `filterExpression.ts` 合成手写草稿、侧栏筛选与降噪；同字段多值 OR，其余 AND，根 Span/耗时/存在性完整展示。执行、URL、保存与告警仍复用原双轨状态，只应用一次；编辑保留原文和光标，改写的自动子句移交草稿并清除对应隐藏筛选，不把复杂 OR/NOT 反向摊平为勾选。SQL 模式保留独立 WHERE，旧链接/快照和深链无需迁移。
+- `LuceneSearchHelp` 在搜索输入框下默认展开，可收起；当前完整条件为编辑草稿，时间范围仍独立生效。双语示例仅展示，不填入或执行，不改变共享智能提示组件。
+- 示例只覆盖当前编译器支持的子集：裸词/短语子串、字段等值、末尾星号前缀、负号排除、空格连接和 OR；存在性指引侧栏（自动表达为 `field:*` / `-field:*`），引用值支持转义/空字符串与字面比较符；不宣称支持通用通配符；编译器支持显式 AND/NOT。说明不写入 URL 或保存快照，SQL 模式隐藏。
 
 - 图表复用 `LuceneSearchHelp` 的 chart 场景：时序/数值按序列、柱状/饼图/事件搜索/热力图/模式按当前条件展示，仅实际 Lucene 输入可见。四来源示例使用各自字段，图表文案指引 Run 生效及 SQL 存在性判断，不沿用搜索侧栏/降噪说明；不扩展各页签语言支持，仪表盘编辑自动复用。
 
@@ -106,7 +107,7 @@
 - 侧边导航前五项按总览、搜索、已保存搜索、图表探索、仪表盘排列，其余入口保持原有相对顺序；完整顺序见 [页面设计](../ui-pages.md)。
 
 - 执行失败（校验不通过）返回 400 + 原因；运行期错误按执行器现有异常映射处理，不保证均为 400。
-- 主搜索采用参数化 LIMIT/OFFSET 分批追加，SQL 每批探测 N+1 行、接口 rowLimit=N；limit 为每批大小，单次仍受 10000 行保护。续页固定已执行 SQL/参数/绝对时间窗，不重查直方图；表格内部 IntersectionObserver 触底加载，追加保留滚动与展开状态。新查询/刷新重置分页并丢弃旧响应；失败保留已有行、同 offset 重试。仅末页成功时显示 End of Results（中文「已显示全部结果」），无顶部截断或显示上限文案。用户排序后附内部字段确定平局顺序；跨请求迟到数据仍可能造成 OFFSET 位移，不承诺事务快照一致性。
+- 主搜索采用参数化 LIMIT/OFFSET 分批追加，SQL 每批探测 N+1 行、接口 rowLimit=N；limit 为每批大小，单次仍受 10000 行保护。续页固定已执行 SQL/参数/绝对时间窗，不重查直方图；表格内部 IntersectionObserver 触底加载，追加保留滚动与展开状态。新查询/刷新重置分页并丢弃旧响应；失败保留已有行、同 offset 重试。定时轮询只在响应到达后一起更新结果、直方图和结果时间窗，关闭直方图重播动画；筛选树/SELECT 属性发现/WHERE 建议锚定最近显式查询的时间窗，不随轮询重查，计数非实时。首查、手动查询、换范围及切源更新该锚点；后台失败保留旧结果，慢查询期间跳过后续轮询，手动查询可抢占。仅末页成功时显示 End of Results（中文「已显示全部结果」），无顶部截断或显示上限文案。用户排序后附内部字段确定平局顺序；跨请求迟到数据仍可能造成 OFFSET 位移，不承诺事务快照一致性。
 - 搜索 SQL 直查不复用 DSL 编译器：表选择权交给用户 SQL（占位符只负责按天分表展开与时间参数绑定），这是统一搜索页替换自造查询语言后的唯一入口；`/api/{logs|traces}/search` DSL 端点保留作 API 兼容，UI 不再使用。
 - 搜索页 Lucene 属性搜索在前端编译而非后端新增语言：编译产物仍是搜索 SQL 直查（唯一通道不扩张），值经 `Parameters` 字典以 DuckDBParameter 绑定——不把外部值拼进 SQL 文本（AGENTS.md 参数绑定强制项，且只读黑名单 `\bdelete\b` 词边界匹配会误杀 `LIKE '%delete%'` 字面量）；标识符（显示字段/排序）无法参数化，改以前端表结构白名单校验兜底。
 - 保存查询不带参数占位符（后续可扩展 `{{param}}` 替换，替换后仍走同一执行器）。

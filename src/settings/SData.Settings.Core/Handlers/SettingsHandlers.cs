@@ -16,16 +16,19 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
 {
     private readonly ISystemSettingsProvider _settingsProvider;
     private readonly SystemOptions _systemOptions;
+    private readonly IDuckDbRuntimeSettings _duckDb;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="QuerySettingsCommandHandler"/> class.
     /// </summary>
     /// <param name="settingsProvider">系统设置.</param>
     /// <param name="systemOptions">文件配置（摄取缓冲等只读快照）.</param>
-    public QuerySettingsCommandHandler(ISystemSettingsProvider settingsProvider, SystemOptions systemOptions)
+    /// <param name="duckDb">DuckDB 运行参数快照.</param>
+    public QuerySettingsCommandHandler(ISystemSettingsProvider settingsProvider, SystemOptions systemOptions, IDuckDbRuntimeSettings duckDb)
     {
         _settingsProvider = settingsProvider;
         _systemOptions = systemOptions;
+        _duckDb = duckDb;
     }
 
     /// <inheritdoc/>
@@ -43,6 +46,11 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
                 SecretKey = string.IsNullOrWhiteSpace(s3.SecretKey) ? string.Empty : S3SettingsModel.SecretMask,
                 HasSecret = !string.IsNullOrWhiteSpace(s3.SecretKey),
             },
+            DuckDb = new DuckDbSettingsResponse
+            {
+                MemoryLimit = _settingsProvider.GetDuckDb().MemoryLimit,
+                EffectiveMemoryLimit = _duckDb.EffectiveMemoryLimit,
+            },
             Retention = _settingsProvider.GetRetention(),
             Compression = _settingsProvider.GetCompression(),
             Otlp = OtlpHeaders.Redact(_settingsProvider.GetOtlp()),
@@ -56,6 +64,14 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
         };
         return Task.FromResult(response);
     }
+}
+
+/// <summary>保存 DuckDB 内存限制处理.</summary>
+public class SaveDuckDbSettingsCommandHandler(DuckDbSettingsService service) : IRequestHandler<SaveDuckDbSettingsCommand, DuckDbSettingsResponse>
+{
+    /// <inheritdoc/>
+    public Task<DuckDbSettingsResponse> Handle(SaveDuckDbSettingsCommand request, CancellationToken cancellationToken)
+        => service.SaveAsync(request.MemoryLimit, cancellationToken);
 }
 
 /// <summary>

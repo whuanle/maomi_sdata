@@ -8,6 +8,12 @@
 	<ItemGroup>
 		<Content Update="data\**\*" Watch="false" />
 		<None Update="data\**\*" Watch="false" />
+		<!-- Runtime state and developer settings must never enter published packages. -->
+		<Content Update="data\**\*;configs\**\*;appsettings.Development.json" CopyToPublishDirectory="Never" />
+		<None Update="data\**\*;configs\**\*" CopyToPublishDirectory="Never" />
+		<!-- 运行时模板只用于生成 runtimeconfig.json，不应进入发布包；单文件下它会被 SDK 当成 Content 复制。 -->
+		<None Update="runtimeconfig.template.json" CopyToPublishDirectory="Never" />
+		<Content Update="runtimeconfig.template.json" CopyToPublishDirectory="Never" />
 	</ItemGroup>
 
 	<ItemGroup>

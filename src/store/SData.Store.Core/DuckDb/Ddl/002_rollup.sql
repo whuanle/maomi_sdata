@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS metrics_rollup_5m (
     sum DOUBLE,
     count BIGINT
 );
-CREATE INDEX IF NOT EXISTS metrics_rollup_5m_qidx ON metrics_rollup_5m (name, labels_hash, bucket_ts);
+DROP INDEX IF EXISTS metrics_rollup_5m_qidx;
 
 CREATE TABLE IF NOT EXISTS metrics_rollup_1h (
     name VARCHAR NOT NULL,
@@ -25,4 +25,4 @@ CREATE TABLE IF NOT EXISTS metrics_rollup_1h (
     sum DOUBLE,
     count BIGINT
 );
-CREATE INDEX IF NOT EXISTS metrics_rollup_1h_qidx ON metrics_rollup_1h (name, labels_hash, bucket_ts);
+DROP INDEX IF EXISTS metrics_rollup_1h_qidx;

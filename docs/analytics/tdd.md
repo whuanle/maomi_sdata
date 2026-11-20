@@ -4,6 +4,9 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @ANALYTICS-S225/S226 | `AnalyticsSearchSqlTests.ResultLimit_*`、`QueryBudget_*`、`DuckDbMemoryRootCauseTests` | 2026-11-20：执行层限制/流式结果、原生超时/准入取消及参数冲突通过；Store最终304/304。对照数据与限制见[内存复盘](../store/memory-root-cause.md)，未做生产部署或长期实机压测 |
+| @ANALYTICS-S223/S224 | `ui/src/pages/search/__tests__/filterExpression.test.ts`、`SearchPage.test.tsx`（多选/取消/排除/仅此值/chip、手改与清空、降噪、根 Span/耗时、SQL 切换、旧链接/保存重开、traceId；不重复执行或绑定） | 2026-11-20：搜索专项22文件200/200，全量前端105文件773/773（maxWorkers=2），typecheck/lint及diff检查通过。初次新增测试定位、jsdom scrollIntoView、测试类型错误已修正；保留npm/localStorage与FacetGroup、DashboardsPage act警告。未做真实浏览器验收或生产构建；证据 `.artifacts/search-filter-focused.log`、`.artifacts/search-filter-full.log`。 |
+| @ANALYTICS-S221/S222 | `ui/src/pages/search/__tests__/SearchPage.test.tsx`（双语法轮询保留节点/输入/焦点/侧栏滚动，手动重锚，直方图禁动画，慢请求防重叠，后台失败保留数据，手动抢占及迟到响应隔离，关闭刷新/绝对范围停轮询） | 2026-11-20：搜索专项21文件183/183，全量前端104文件754/754（maxWorkers=2），typecheck/lint通过；保留npm配置与localStorage警告。未进行真实浏览器验收或生产构建，不以mock代替视觉验收。 |
 | @ANALYTICS-S215 | `AnalyticsPage.test.tsx`（模式固定宽度与草稿切换）；浏览器工作台截图 | 2026-11-19：页面10/10、typecheck/lint通过；暗色1280px确认双行查询栏与右侧运行控件，亮色/窄屏和Lucene真实交互未完整验收；目录存在HTTP500，本次仅调整布局，未重跑全量或构建。 |
 | @ANALYTICS-S214 / @ANALYTICS-S213 分栏 | `AnalyticsPage.test.tsx`（等分 flex 约束、独立字段筛选、切表复位） | 2026-11-19：页面10/10、typecheck/lint通过；滚动与实际高度的浏览器验收未补，本次未重跑全量或构建。 |
 | @ANALYTICS-S220 | `SearchAlertsModal.test.tsx`、`SearchPage.test.tsx`；[告警验证](../alerts/tdd.md) | 2026-11-19：定向 33/33 通过，浏览器点击超时，真实界面验收未完成 |

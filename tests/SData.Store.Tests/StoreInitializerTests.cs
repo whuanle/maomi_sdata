@@ -78,6 +78,17 @@ public class StoreInitializerTests
         Assert.Equal(0, count);
     }
 
+    [Fact]
+    public async Task Start_PersistedMemoryLimit_AppliesBeforeBootstrap()
+    {
+        using var harness = new Harness();
+        await harness.Settings.SaveAsync(SettingKeys.DuckDb, """{"memoryLimit":"1GB"}""", default);
+        await harness.Initializer.StartAsync(default);
+        Assert.Equal("1GB", harness.Manager.MemoryLimit);
+        Assert.NotEmpty(harness.Manager.EffectiveMemoryLimit);
+        Assert.Equal("512MB", harness.Options.DuckDb.MemoryLimit); // 文件回退不能被运行值覆盖
+    }
+
     /// <summary>测试夹具：Manager 不预初始化（由 StoreInitializer.StartAsync 负责打开）.</summary>
     private sealed class Harness : IDisposable
     {

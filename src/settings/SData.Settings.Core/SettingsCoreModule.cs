@@ -20,6 +20,7 @@ public class SettingsCoreModule : IModule
     public void ConfigureServices(ServiceContext context)
     {
         context.Services.AddSingleton<ISystemSettingsProvider, SystemSettingsProvider>();
+        context.Services.AddSingleton<DuckDbSettingsService>();
         context.Services.AddDataProtection().SetApplicationName("SData");
         context.Services.AddOptions<KeyManagementOptions>().Configure<SystemOptions>((options, system) =>
         {

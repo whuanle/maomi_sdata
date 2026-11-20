@@ -1072,6 +1072,15 @@
     "liveMiniHeatmap": "实时热力（页面累计）"
   },
   "settings": {
+    "tabDuckDb": "DuckDB",
+    "duckDbTitle": "DuckDB 内存限制",
+    "duckDbUnavailable": "当前后端未提供 DuckDB 内存设置，请更新并重启后端服务后重试。",
+    "duckDbHint": "保存后立即生效，重启后保留。此限制不是整个服务进程的内存上限；调大前请为宿主机或容器、摄取缓冲及其他组件预留资源。调小不保证立即降低进程内存。",
+    "duckDbEffective": "当前生效值",
+    "duckDbMemoryLimit": "内存限制",
+    "duckDbUnits": "例如 512MB、2GB 或 1.5GiB。MB/GB 为十进制，MiB/GiB 为二进制单位。",
+    "duckDbInvalid": "请输入有效的正数容量（MB/GB/MiB/GiB），例如 2GB",
+    "duckDbSaved": "DuckDB 内存限制已保存并立即生效",
     "loadFailed": "设置加载失败，请重试。",
     "retry": "重试",
     "status": "服务状态",
@@ -1182,6 +1191,7 @@
     "mqPendingConfirmation": "待确认",
     "mqRecentFailures": "最近失败",
     "mqRecovered": "已恢复",
+    "mqWriterRecovered": "持久化已恢复（历史故障）",
     "mqStage": { "connecting": "连接 / 主题发现", "receive": "接收 / 空闲", "parse": "解析", "persist": "持久化", "confirm": "消息确认", "unknown": "未知" },
     "mqRequestError": { "timeout": "状态请求超时（8 秒）", "request": "状态请求失败，请检查网络和 HTTP 状态码", "response": "响应不是有效 JSON", "contract": "响应契约不匹配，请核对前后端部署版本" },
     "mqStatusHint": "最近 60 秒速率 · 当前会话累计 · 至少一次投递可能产生重复记录",

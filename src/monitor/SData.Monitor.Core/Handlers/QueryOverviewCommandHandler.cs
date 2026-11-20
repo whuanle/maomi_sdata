@@ -28,6 +28,7 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
     private readonly SystemOptions _systemOptions;
     private readonly ISystemSettingsProvider _settings;
     private readonly IStorageMetrics _metrics;
+    private readonly IDuckDbRuntimeSettings _duckDb;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="QueryOverviewCommandHandler"/> class.
@@ -36,13 +37,14 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
     /// <param name="storeInfo">存储信息.</param>
     /// <param name="systemOptions">系统配置.</param>
     /// <param name="settings">有效运行配置.</param>
-    public QueryOverviewCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ISystemSettingsProvider settings, IStorageMetrics metrics)
+    public QueryOverviewCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ISystemSettingsProvider settings, IStorageMetrics metrics, IDuckDbRuntimeSettings duckDb)
     {
         _buffer = buffer;
         _storeInfo = storeInfo;
         _systemOptions = systemOptions;
         _settings = settings;
         _metrics = metrics;
+        _duckDb = duckDb;
     }
 
     /// <inheritdoc/>
@@ -76,16 +78,14 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
         var stats = _buffer.GetStats();
         response.BufferedRecords = stats.Buffered.Values.DefaultIfEmpty(0).Max();
         var today = DateTimeOffset.UtcNow;
+
+        // 一次性批量统计各域今日行数：原先每域各占一次查询门 + 克隆一次连接，这里合并为单条 UNION ALL
+        var todayTables = new List<(string Name, string TableName)>(Domains.Length);
         foreach (var (prefix, name, statsKey) in Domains)
         {
             var tables = _storeInfo.GetTableNames(prefix);
             response.TableCounts[name] = tables.Count;
-
-            var todayTable = TimeTables.Name(prefix, today);
-            var todayRows = tables.Contains(todayTable)
-                ? await _storeInfo.CountTableAsync(todayTable, cancellationToken)
-                : 0;
-            response.TodayRows[name] = todayRows;
+            todayTables.Add((name, TimeTables.Name(prefix, today)));
 
             // 缓冲统计键为 IngestKind 枚举小写（log/trace/metric/telemetry/rumevent/rumsession/rumreplay）
             response.Channels.Add(new OverviewChannel
@@ -97,6 +97,12 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
             });
         }
 
+        var todayRows = await _storeInfo.CountTablesAsync(todayTables, cancellationToken);
+        foreach (var (name, rows) in todayRows)
+        {
+            response.TodayRows[name] = rows;
+        }
+
         return response;
     }
 
@@ -106,7 +112,7 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
         var storage = new OverviewStorage
         {
             ColdEnabled = !string.IsNullOrWhiteSpace(s3.Endpoint) && !string.IsNullOrWhiteSpace(s3.Bucket),
-            MemoryLimit = _systemOptions.DuckDb.MemoryLimit,
+            MemoryLimit = _duckDb.EffectiveMemoryLimit,
             HotDbPath = _systemOptions.DuckDb.Path,
         };
 

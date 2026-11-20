@@ -13,6 +13,20 @@ public class QuerySettingsCommand : IRequest<SettingsResponse>
 {
 }
 
+/// <summary>保存 DuckDB 内存限制（立即生效）.</summary>
+public class SaveDuckDbSettingsCommand : IRequest<DuckDbSettingsResponse>, IModelValidator<SaveDuckDbSettingsCommand>
+{
+    /// <summary>容量值，支持 MB/GB/MiB/GiB.</summary>
+    public string MemoryLimit { get; set; } = string.Empty;
+
+    /// <inheritdoc/>
+    public static void Validate(AbstractValidator<SaveDuckDbSettingsCommand> validate)
+    {
+        validate.RuleFor(x => x.MemoryLimit).Must(value => DuckDbMemoryLimit.TryNormalize(value, out _))
+            .WithMessage("内存限制必须是有效的正数容量，例如 512MB 或 2GB");
+    }
+}
+
 /// <summary>
 /// 保存 S3 冷存储设置（立即重建 SECRET，立即生效）.
 /// </summary>

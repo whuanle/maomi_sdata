@@ -47,6 +47,7 @@ import { canWriteRole, useAuthStore } from '@/store/auth';
 import { formatDateTime } from '@/utils/format';
 import { LuceneCompileError } from './lucene';
 import { effectiveSearch } from './effectiveSearch';
+import { editSearchExpression, searchExpression } from './filterExpression';
 import { SearchAlertsModal } from './SearchAlertsModal';
 import { jsonFieldExpression, parseJsonField, quoteFieldAlias, splitFieldList } from './jsonFields';
 import { SelectColumnsPopover, SortEditorPopover } from './ColumnPicker';
@@ -177,6 +178,19 @@ export function SearchPage({ savedId }: SearchPageProps) {
   const [viewMode, setViewMode] = useState<'table' | 'json'>('table');
   const [denoise, setDenoise] = useState(initialState.denoise);
   const [filters, setFilters] = useState<SearchFilter[]>(initialState.filters);
+  // 输入展示完整条件，持久化与执行仍沿用草稿/筛选双轨，避免旧链接迁移及重复叠加。
+  const [luceneEdit, setLuceneEdit] = useState<{ text: string; where: string; filters: SearchFilter[]; denoise: boolean; source: SearchDomain } | null>(null);
+  const activeDenoise = denoise && source === 'logs';
+  const luceneExpression = luceneEdit && luceneEdit.where === whereText && luceneEdit.filters === filters
+    && luceneEdit.denoise === activeDenoise && luceneEdit.source === source
+    ? luceneEdit.text : searchExpression(whereText, filters, activeDenoise);
+  const onLuceneChange = (value: string) => {
+    const edited = editSearchExpression(value, filters, activeDenoise);
+    setLuceneEdit({ text: value, ...edited, source });
+    setWhereText(edited.where);
+    setFilters(edited.filters);
+    if (source === 'logs') setDenoise(edited.denoise);
+  };
   // SQL 模式手写 WHERE 片段（行2；行1 已定义 SELECT/ORDER BY，与 Lucene 表达式同位不同语法）
   const [sqlWhere, setSqlWhere] = useState<string>(initialState.sqlWhere);
   const [timeRangeValue, setTimeRangeValue] = useState<TimeRange>(initialState.timeRange);
@@ -193,12 +207,15 @@ export function SearchPage({ savedId }: SearchPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchedRange, setSearchedRange] = useState<[Dayjs, Dayjs] | null>(null);
+  // 属性发现锚定显式查询，轮询滑窗不清空筛选树和输入建议。
+  const [facetRange, setFacetRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
   // 详情抽屉目标行（ClickStack 式侧栏；行点击打开，与行首箭头的就地展开区分）
   const [detailRow, setDetailRow] = useState<Record<string, unknown> | null>(null);
   const [detailRange, setDetailRange] = useState<[string, string] | null>(null);
   // 查询序号（连续切换范围时丢弃过期响应）
   const runSeqRef = useRef(0);
+  const pendingExecutionRef = useRef<number | null>(null);
   const [queryGeneration, setQueryGeneration] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
@@ -210,6 +227,7 @@ export function SearchPage({ savedId }: SearchPageProps) {
 
   const resetPages = useCallback(() => {
     const seq = ++runSeqRef.current;
+    pendingExecutionRef.current = null;
     pageRef.current = null;
     pendingPageRef.current = false;
     setQueryGeneration(seq);
@@ -366,12 +384,17 @@ export function SearchPage({ savedId }: SearchPageProps) {
   };
 
   const execute = useCallback(
-    async (built: BuiltQuery, range: [Dayjs, Dayjs], rowLimit: number) => {
+    async (built: BuiltQuery, range: [Dayjs, Dayjs], rowLimit: number, background = false) => {
+      if (background && pendingExecutionRef.current !== null) return;
       // 过期响应丢弃：连续切换时间范围/快速重查时只落最后一次请求的结果
       const seq = resetPages();
+      pendingExecutionRef.current = seq;
       setLoading(true);
       setError(null);
-      setSearchedRange(range);
+      if (!background) {
+        setSearchedRange(range);
+        setFacetRange(range);
+      }
       try {
         const parameters = built.parameters;
         const page = { seq, sql: built.sql, parameters, from: range[0].toISOString(), to: range[1].toISOString(), rowLimit, offset: 0, hasMore: false };
@@ -410,6 +433,8 @@ export function SearchPage({ savedId }: SearchPageProps) {
 
         page.offset = response.rows.length;
         page.hasMore = response.truncated && response.rows.length > 0;
+        setSearchedRange(range);
+        setFacetRange((previous) => previous ?? range);
         setResult({ ...response, truncated: page.hasMore });
         setVisibleColumns(built.visibleFields ?? response.columns);
         setHistogram(histogramRequest && histogramResponse
@@ -420,11 +445,14 @@ export function SearchPage({ savedId }: SearchPageProps) {
           return;
         }
 
-        setResult(null);
-        setHistogram(null);
+        if (!background) {
+          setResult(null);
+          setHistogram(null);
+        }
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         if (seq === runSeqRef.current) {
+          pendingExecutionRef.current = null;
           setLoading(false);
         }
       }
@@ -463,14 +491,17 @@ export function SearchPage({ savedId }: SearchPageProps) {
   }, []);
 
   /** 当前状态运行（时间范围实时计算，Live Tail 轮询下为滑窗）. */
-  const runCurrent = (overrides?: { fields?: string; orderBy?: string }) => {
+  const runCurrent = (overrides?: { fields?: string; orderBy?: string }, background = false) => {
+    if (background && pendingExecutionRef.current !== null) return;
     try {
       const built = syntax === 'lucene' ? buildLuceneQuery(overrides) : buildSqlQuery(overrides);
-      void execute(built, currentTimeRange(), limit);
+      void execute(built, currentTimeRange(), limit, background);
     } catch (err) {
-      resetPages();
-      setResult(null);
-      setHistogram(null);
+      if (!background) {
+        resetPages();
+        setResult(null);
+        setHistogram(null);
+      }
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -511,7 +542,7 @@ export function SearchPage({ savedId }: SearchPageProps) {
       return;
     }
 
-    const timer = setInterval(() => runRef.current(), refreshIntervalSec * 1000);
+    const timer = setInterval(() => runRef.current(undefined, true), refreshIntervalSec * 1000);
     return () => clearInterval(timer);
   }, [isCustomRange, refreshIntervalSec]);
 
@@ -688,6 +719,7 @@ export function SearchPage({ savedId }: SearchPageProps) {
     const hasData = !!result && result.rows.length > 0 && result.columns.includes('ts');
 
     const base = {
+      animation: false,
       tooltip: { trigger: 'axis' as const },
       // HyperDX 式细柱直方图：仅保留少量 y 轴刻度（25/100…）与稀疏时间标签，无网格
       grid: { left: 34, right: 12, top: 6, bottom: 20 },
@@ -1014,8 +1046,8 @@ export function SearchPage({ savedId }: SearchPageProps) {
               domain={source}
               value={fieldsText}
               onChange={onFieldsChange}
-              from={searchedRange ? searchedRange[0].toISOString() : null}
-              to={searchedRange ? searchedRange[1].toISOString() : null}
+              from={facetRange ? facetRange[0].toISOString() : null}
+              to={facetRange ? facetRange[1].toISOString() : null}
               denoise={denoise}
             />
           </div>
@@ -1126,14 +1158,14 @@ export function SearchPage({ savedId }: SearchPageProps) {
               <WhereSuggestInput
                 domain={source}
                 syntax="lucene"
-                value={whereText}
-                onChange={setWhereText}
+                value={luceneExpression}
+                onChange={onLuceneChange}
                 onRun={() => runRef.current()}
                 className="w-full font-mono text-[13px]"
                 placeholder={t('search.wherePlaceholder')}
                 testId="search-where"
-                from={searchedRange ? searchedRange[0].toISOString() : null}
-                to={searchedRange ? searchedRange[1].toISOString() : null}
+                from={facetRange ? facetRange[0].toISOString() : null}
+                to={facetRange ? facetRange[1].toISOString() : null}
                 denoise={denoise}
               />
             ) : (
@@ -1146,8 +1178,8 @@ export function SearchPage({ savedId }: SearchPageProps) {
                 className="w-full font-mono text-[13px]"
                 placeholder={t('search.sqlWherePlaceholder')}
                 testId="search-where-sql"
-                from={searchedRange ? searchedRange[0].toISOString() : null}
-                to={searchedRange ? searchedRange[1].toISOString() : null}
+                from={facetRange ? facetRange[0].toISOString() : null}
+                to={facetRange ? facetRange[1].toISOString() : null}
                 denoise={denoise}
               />
             )}
@@ -1199,7 +1231,7 @@ export function SearchPage({ savedId }: SearchPageProps) {
           </div>
         </div>
 
-        {syntax === 'lucene' && <LuceneSearchHelp source={source} value={whereText} />}
+        {syntax === 'lucene' && <LuceneSearchHelp source={source} value={luceneExpression} />}
 
         {error && (
           <div className="mb-2 flex items-center justify-between gap-2 bg-error-soft px-3 py-2 text-sm font-sans text-error">
@@ -1220,8 +1252,8 @@ export function SearchPage({ savedId }: SearchPageProps) {
             onDenoiseChange={setDenoise}
             filters={filters}
             onFiltersChange={setFilters}
-            from={searchedRange ? searchedRange[0].toISOString() : null}
-            to={searchedRange ? searchedRange[1].toISOString() : null}
+            from={facetRange ? facetRange[0].toISOString() : null}
+            to={facetRange ? facetRange[1].toISOString() : null}
           />
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             {/* 结果头部：N 条结果（左）+ 耗时 + 视图切换/CSV 导出（右），HyperDX 式等宽 */}
