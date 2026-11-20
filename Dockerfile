@@ -7,6 +7,9 @@ COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
 COPY ui/packages/ ./packages/
 RUN npm i -g pnpm@10 --no-audit --no-fund && pnpm install --frozen-lockfile
 COPY ui/ ./
+# 部分前端测试通过 ../../../../../tests/... 引用后端真实数据库 fixture（前后端 SQL 契约测试），
+# typecheck 需要这些 JSON 存在于构建上下文对应路径；仅进入中间阶段，不进最终镜像。
+COPY tests/SData.Store.Tests/Fixtures/ /src/tests/SData.Store.Tests/Fixtures/
 # 输出到独立目录，最终阶段复制进宿主 wwwroot
 RUN pnpm typecheck \
     && pnpm exec vite build --outDir dist-output \
