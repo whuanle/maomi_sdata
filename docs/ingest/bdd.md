@@ -30,6 +30,13 @@ Feature: 数据接入
     When 简单 JSON、OTLP 或 ES Bulk 请求在估算字节或解析前超出可用预算
     Then 请求返回 HTTP 429、携带 Retry-After 且不入队或只计整批丢弃，不伪报已接收
 
+  @INGEST-PF13 @auto:xunit
+  Scenario: 缓冲满载时接入请求在反序列化前被快速拒绝
+    Given 接入缓冲条数接近容量上限或字节预算已耗尽
+    When 简单 JSON 接入请求在模型绑定（请求体反序列化）之前到达
+    Then 请求立即返回 HTTP 429 与 Retry-After，响应 accepted 为 0 表示整批未解析未接收，客户端需整批重试
+    Then 被拒请求不产生请求体反序列化开销，快速拒绝次数计入 sdata_ingest_fast_rejected_total
+
   @INGEST-PF09 @auto:xunit
   Scenario: MQ 批量入缓冲只重试被拒记录
     Given MQ 消息批量解析为日志记录且接入缓冲容量不足

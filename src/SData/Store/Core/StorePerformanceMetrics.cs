@@ -22,6 +22,7 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
     private long _retentionTablesDropped;
     private long _retentionArchiveRecordsExpired;
     private long _retentionRollupRowsDeleted;
+    private long _ingestFastRejected;
 
     public StorePerformanceSnapshot Snapshot => new()
     {
@@ -47,6 +48,7 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
             new() { Name = "sdata_retention_tables_dropped_total", Value = Interlocked.Read(ref _retentionTablesDropped) },
             new() { Name = "sdata_retention_archive_records_expired_total", Value = Interlocked.Read(ref _retentionArchiveRecordsExpired) },
             new() { Name = "sdata_retention_rollup_rows_deleted_total", Value = Interlocked.Read(ref _retentionRollupRowsDeleted) },
+            new() { Name = "sdata_ingest_fast_rejected_total", Value = Interlocked.Read(ref _ingestFastRejected) },
         ],
     };
 
@@ -59,6 +61,7 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
     public void RecordMaintenanceLockWait(long start) => _maintenanceLockWait.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
     public void RecordIngestAppend(long start) => _ingestAppend.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
     public void RecordIngestCommit(long start) => _ingestCommit.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
+    public void RecordIngestFastRejected(long count) => Interlocked.Add(ref _ingestFastRejected, count);
 
     public void RecordRollupDuration(long start) => _rollupDuration.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
     public void RecordRollupRows(long rows) => Interlocked.Add(ref _rollupRows, rows);

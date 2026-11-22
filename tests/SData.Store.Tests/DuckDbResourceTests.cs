@@ -15,7 +15,7 @@ public class DuckDbResourceTests
     [Fact]
     public async Task QueryAdmission_CoversReaderLifetime_AndCancellationDoesNotLeakPermit()
     {
-        await using var harness = await Harness.CreateAsync();
+        await using var harness = await Harness.CreateAsync(options => options.DuckDb.MaxConcurrentQueries = 1);
         using var lease = await harness.Manager.LockQueryAsync(CancellationToken.None);
         using var stop = new CancellationTokenSource();
         var waiting = harness.Manager.QueryAsync("SELECT 42", null, async reader =>
@@ -54,7 +54,7 @@ public class DuckDbResourceTests
             await reader.ReadAsync();
             return reader.GetInt64(0);
         }).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(2, threads);
+        Assert.Equal(8, threads);
     }
 
     [Theory]
@@ -166,7 +166,7 @@ public class DuckDbResourceTests
     [Fact]
     public async Task AnalyticsAndDsl_ShareQueryBudget_WithoutBlockingWriter()
     {
-        await using var harness = await Harness.CreateAsync();
+        await using var harness = await Harness.CreateAsync(options => options.DuckDb.MaxConcurrentQueries = 1);
         var now = DateTimeOffset.UtcNow;
         await harness.Manager.EnsureDayTablesAsync(TimeTables.LogsPrefix, [now]);
         var resolver = new HotResolver(harness.Manager);
@@ -176,12 +176,15 @@ public class DuckDbResourceTests
         using var stop = new CancellationTokenSource();
         var sql = analytics.ExecuteAsync("SELECT 1", cancellationToken: stop.Token);
         var search = analytics.ExecuteSearchAsync("SELECT * FROM {{logs}} WHERE ts >= $start AND ts < $end", now.AddMinutes(-1), now.AddMinutes(1), cancellationToken: stop.Token);
-        var alert = analytics.ExecuteAlertCountAsync(new AlertCountQuery("logs", "", new Dictionary<string, object?>(), now.AddMinutes(-1), now, 10), stop.Token);
         var structured = dsl.ExecuteAsync(new QueryDslModel { Range = new QueryRange { From = now.AddMinutes(-1), To = now.AddMinutes(1) } }, DataDomain.Logs, stop.Token);
         Assert.False(sql.IsCompleted);
         Assert.False(search.IsCompleted);
-        Assert.False(alert.IsCompleted);
         Assert.False(structured.IsCompleted);
+
+        // alert 走独立告警门（不与用户查询共享预算）：持告警门验证其取消语义
+        using var alertLease = await harness.Manager.LockAlertQueryAsync(CancellationToken.None);
+        var alert = analytics.ExecuteAlertCountAsync(new AlertCountQuery("logs", "", new Dictionary<string, object?>(), now.AddMinutes(-1), now, 10), stop.Token);
+        Assert.False(alert.IsCompleted);
 
         await harness.Writer.FlushAsync([new(IngestKind.Log, new LogRecord { Timestamp = now, Body = "query gate does not block ingestion" })], CancellationToken.None)
             .WaitAsync(TimeSpan.FromSeconds(5));
@@ -190,6 +193,7 @@ public class DuckDbResourceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => search);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => alert);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => structured);
+        alertLease.Dispose();
         lease.Dispose();
         Assert.Single((await analytics.ExecuteAsync("SELECT 42").WaitAsync(TimeSpan.FromSeconds(5))).Rows);
     }

@@ -4,6 +4,9 @@ namespace SData.Store;
 public interface IStorePerformanceMetrics
 {
     StorePerformanceSnapshot Snapshot { get; }
+
+    /// <summary>记录接入背压快速拒绝次数（模型绑定前拦截的 429）.</summary>
+    void RecordIngestFastRejected(long count);
 }
 
 /// <summary>Store 累积直方图的只读快照.</summary>

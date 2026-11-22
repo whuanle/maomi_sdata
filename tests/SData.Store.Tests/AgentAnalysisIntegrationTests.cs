@@ -172,6 +172,7 @@ public partial class StoreIntegrationTests
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddDbContext<DatabaseContext>(o => o.UseSqlite("Data Source=" + file));
+        builder.Services.AddSingleton<SData.Settings.ISystemSettingsProvider>(SystemSettingsProvider.FileOnly(_systemOptions));
         builder.Services.AddSingleton<AgentRequestBudget>();
         builder.Services.AddSingleton<IAgentAnalysis>(Analysis());
         builder.Services.AddSingleton<IAgentQueries>(provider => new AgentQueries(

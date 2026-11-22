@@ -128,6 +128,9 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
 
     internal void RecordIngestCommit(long started) => _performanceMetrics.RecordIngestCommit(started);
 
+    /// <inheritdoc/>
+    public void RecordIngestFastRejected(long count) => _performanceMetrics.RecordIngestFastRejected(count);
+
     internal void RecordRollupDuration(long started) => _performanceMetrics.RecordRollupDuration(started);
 
     internal void RecordRollupRows(long rows) => _performanceMetrics.RecordRollupRows(rows);
@@ -274,6 +277,12 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
             await ApplyThreadsAsync(effectiveThreads, cancellationToken);
         }
 
+        // WAL checkpoint 阈值：调大可减少高频提交时 checkpoint 抢占 commit（空 = 引擎默认 16MB）
+        if (!string.IsNullOrWhiteSpace(_options.CheckpointThreshold))
+        {
+            await ExecuteUnsafeAsync("SET checkpoint_threshold = $threshold", [new DuckDBParameter("threshold", _options.CheckpointThreshold.Trim())], cancellationToken);
+        }
+
         if (maxConcurrentQueries is { } queries)
         {
             ApplyMaxConcurrentQueries(queries);
@@ -302,8 +311,8 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
         await using var config = _master.CreateCommand();
         config.CommandText = "SELECT current_setting(\'threads\')";
         var readThreads = Convert.ToInt32(await config.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
-        _logger.LogInformation("DuckDB initialized at {Path} with {TableCount} tables (memory_limit={MemoryLimit}, effective_limit={EffectiveLimit}, threads={Threads}, max_queries={MaxQueries})",
-            dbPath, _tables.Count, MemoryLimit, EffectiveMemoryLimit, readThreads, Math.Clamp(maxConcurrentQueries ?? _options.MaxConcurrentQueries, 1, 32));
+        _logger.LogInformation("DuckDB initialized at {Path} with {TableCount} tables (memory_limit={MemoryLimit}, effective_limit={EffectiveLimit}, threads={Threads}, max_queries={MaxQueries}, checkpoint_threshold={CheckpointThreshold})",
+            dbPath, _tables.Count, MemoryLimit, EffectiveMemoryLimit, readThreads, Math.Clamp(maxConcurrentQueries ?? _options.MaxConcurrentQueries, 1, 32), string.IsNullOrWhiteSpace(_options.CheckpointThreshold) ? "default" : _options.CheckpointThreshold);
     }
 
     /// <inheritdoc/>
@@ -342,6 +351,8 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
 
     /// <summary>
     /// 打开一个新连接（DuckDB 实例缓存保证同进程同路径共享同一数据库实例）.
+    /// 注意：不要把 DuckDB 连接池化复用——流式查询后即使释放 reader/command，
+    /// 连接对象保持打开仍会在实例上留下未结束的事务上下文，阻塞 CHECKPOINT/归档.
     /// </summary>
     /// <returns>已打开的连接.</returns>
     public DuckDBConnection CloneConnection()

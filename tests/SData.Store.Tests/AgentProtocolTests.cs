@@ -28,6 +28,7 @@ public class AgentProtocolTests
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddDbContext<DatabaseContext>(o => o.UseSqlite("Data Source=" + file));
+        builder.Services.AddSingleton<SData.Settings.ISystemSettingsProvider>(SystemSettingsProvider.FileOnly(new SData.Infra.Configuration.SystemOptions()));
         builder.Services.AddSingleton<AgentRequestBudget>();
         builder.Services.AddSingleton<IAgentQueries, StubQueries>();
         builder.Services.AddSingleton<IAgentAnalysis, StubAnalysis>();

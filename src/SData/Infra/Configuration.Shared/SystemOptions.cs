@@ -300,17 +300,33 @@ public class DuckDbOptions
     /// <summary>
     /// 内存上限（DuckDB memory_limit，如 512MB）.
     /// </summary>
-    public string MemoryLimit { get; set; } = "512MB";
+    public string MemoryLimit { get; set; } = "2GB";
 
     /// <summary>
-    /// 线程数，默认 2，0 = 自动.
+    /// 线程数，默认 8，0 = 自动.
     /// </summary>
-    public int Threads { get; set; } = 2;
+    public int Threads { get; set; } = 8;
 
     /// <summary>
-    /// 同时执行的查询数（1–32），默认 1，降低小内存部署的查询资源竞争.
+    /// 同时执行的查询数（1–32），默认 4；小内存部署可调回 1 降低查询资源竞争.
     /// </summary>
-    public int MaxConcurrentQueries { get; set; } = 1;
+    public int MaxConcurrentQueries { get; set; } = 4;
+
+    /// <summary>
+    /// WAL checkpoint 阈值（DuckDB checkpoint_threshold，如 128MB）；WAL 超过该值在提交时触发 checkpoint.
+    /// 调大可显著降低高频提交时 checkpoint 抢占 commit 的概率；空 = 使用引擎默认.
+    /// </summary>
+    public string CheckpointThreshold { get; set; } = "1GB";
+
+    /// <summary>
+    /// DSL 查询结果缓存 TTL（秒，0 = 关闭）。range 尾端按 TTL 对齐时间桶，仪表盘轮询在 TTL 内命中缓存；最坏陈旧度 = TTL.
+    /// </summary>
+    public int QueryCacheTtlSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// DSL 查询结果缓存最大条目数.
+    /// </summary>
+    public int QueryCacheMaxEntries { get; set; } = 256;
 
     /// <summary>分析查询预算（秒，1–300），包含准入等待及原生执行.</summary>
     public int QueryTimeoutSeconds { get; set; } = 30;
@@ -404,14 +420,14 @@ public class IngestOptions
     public long BufferByteBudgetBytes { get; set; } = 256L * 1024 * 1024;
 
     /// <summary>
-    /// 批量落库条数.
+    /// 批量落库条数（DuckDB commit 成本近似固定，批越大摊薄越狠）.
     /// </summary>
-    public int BatchSize { get; set; } = 5_000;
+    public int BatchSize { get; set; } = 50_000;
 
     /// <summary>
     /// 落库间隔（毫秒）.
     /// </summary>
-    public int FlushIntervalMs { get; set; } = 200;
+    public int FlushIntervalMs { get; set; } = 500;
 }
 
 /// <summary>

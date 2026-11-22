@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<!-- 压测工具独立于主解决方案（不加入 slnx），关闭仓库级分析器避免噪音 -->
+		<RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+		<EnableNETAnalyzers>false</EnableNETAnalyzers>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
+		<InvariantGlobalization>true</InvariantGlobalization>
+	</PropertyGroup>
+
+</Project>

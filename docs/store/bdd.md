@@ -5,10 +5,10 @@
 Feature: DuckDB 观测数据存储
 
   @STORE-PF04 @auto:xunit
-  Scenario: Rollup 仅重算前进水位附近的迟到桶
-    Given 首轮回填已将水位写入 DuckDB，随后 DuckDB 连接管理器重启且旧桶与最近两个关闭桶又收到迟到指标
+  Scenario: Rollup 仅重算前进水位附近固定迟到窗口内的桶
+    Given 首轮回填已将水位写入 DuckDB，随后 DuckDB 连接管理器重启且水位前固定迟到窗口（10 分钟）内的桶又收到迟到指标
     When 再次执行 5m 与 1h 回填
-    Then 最近两个关闭桶重新聚合，窗口外的旧桶不被扫描；水位与最后桶替换在同一事务提交
+    Then 迟到窗口内的桶重新聚合，窗口外的旧桶不被扫描；水位与最后桶替换在同一事务提交
 
   @STORE-PF04 @auto:xunit
   Scenario: 水位写入失败后事务回滚并在重启后恢复
@@ -27,6 +27,20 @@ Feature: DuckDB 观测数据存储
     Given 一批日志通过有界缓冲等待写入器
     When 缓冲接收完整批次且写入器提交事务
     Then 仅批次最后一条携带回执，回执在事务提交后完成，有等待者时跳过低水位等待
+
+  @STORE-CACHE1 @auto:xunit
+  Scenario: 查询结果短 TTL 缓存命中与桶边界失效
+    Given DSL 统一查询开启结果缓存（QueryCacheTtlSeconds > 0）
+    When 同一签名查询在 TTL 时间桶内重复提交，随后跨过桶边界再次提交
+    Then 桶内命中缓存直接返回相同响应，跨桶后重新执行并刷新缓存
+    Then 响应行数超过缓存上限（1000 行）不缓存；TTL 为 0 时全部请求直通内层执行器
+
+  @STORE-S39 @auto:xunit
+  Scenario: DSL 查询可选列式响应
+    Given 查询请求 columnar 为 true
+    When 执行统一查询
+    Then 响应 rows 为空、rowsArrays 与 columns 对齐且 columnar 标记为 true
+    Then 缺省请求仍返回键值行形式，行为与既有契约一致
 
   @STORE-S36 @auto:xunit
   Scenario: 持续回填和重启不重复放大汇总存储

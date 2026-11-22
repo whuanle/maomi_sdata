@@ -936,7 +936,11 @@ public partial class AnalyticsSearchSqlTests(global::Xunit.Abstractions.ITestOut
     [Fact]
     public async Task QueryBudget_IncludesAdmissionWait_AndHonorsCallerCancellation()
     {
-        using var harness = new SearchHarness(options => options.DuckDb.QueryTimeoutSeconds = 1);
+        using var harness = new SearchHarness(options =>
+        {
+            options.DuckDb.QueryTimeoutSeconds = 1;
+            options.DuckDb.MaxConcurrentQueries = 1; // 预算含准入等待：需要单槽位语义
+        });
         using var lease = await harness.Manager.LockQueryAsync(CancellationToken.None);
         var failure = await Assert.ThrowsAsync<BusinessException>(() => harness.Executor.ExecuteAsync("SELECT 42"));
         Assert.Equal(408, failure.StatusCode);

@@ -51,7 +51,10 @@ public class StoreCoreModule : IModule
         context.Services.AddSingleton<ColdCacheService>();
         context.Services.AddHostedService(sp => sp.GetRequiredService<ColdCacheService>());
         context.Services.AddSingleton<SData.Store.QueryDsl.ITableResolver, TableResolver>();
-        context.Services.AddScoped<SData.Store.QueryDsl.IQueryDslExecutor, QueryDslExecutorService>();
+        context.Services.AddSingleton<QueryDslExecutorService>();
+        // 查询执行器包装短 TTL 结果缓存装饰器（QueryCacheTtlSeconds=0 时直通）
+        context.Services.AddSingleton<SData.Store.QueryDsl.IQueryDslExecutor>(sp =>
+            new CachedQueryDslExecutor(sp.GetRequiredService<QueryDslExecutorService>(), sp.GetRequiredService<SystemOptions>()));
         context.Services.AddHostedService<StoreInitializer>();
         context.Services.AddHostedService<IngestWriterService>();
         context.Services.AddHostedService<RetentionService>();

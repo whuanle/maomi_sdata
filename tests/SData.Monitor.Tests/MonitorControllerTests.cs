@@ -113,5 +113,9 @@ public class MonitorControllerTests
             ],
             Counters = [new StoreCounterSnapshot { Name = "sdata_archive_rows_total", Value = 12 }],
         };
+
+        public void RecordIngestFastRejected(long count)
+        {
+        }
     }
 }

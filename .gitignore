@@ -469,3 +469,6 @@ id_ed25519
 # 发布工具源码不是构建输出 Release 目录
 !/tool/Release/
 
+
+# 压测工具产物（trace/csv/本地报告），不提交
+/tool/StressTest/perf/

@@ -73,6 +73,19 @@ public class QueryDslTests
         Assert.Equal("%disk\\%100\\_%", Param(query, "p0"));
     }
 
+    /// <summary>logs 仅聚合无分组：全局聚合不输出 GROUP BY（空 GROUP BY 曾导致 DuckDB 语法错误 500）.</summary>
+    [Fact]
+    public void Logs_AggregationOnly_GlobalAggregate_NoGroupBy()
+    {
+        var model = Base();
+        model.Aggregations.Add(new QueryAggregation { Func = "count", Alias = "c" });
+
+        var query = QueryDslCompiler.Compile(model, DataDomain.Logs);
+
+        Assert.DoesNotContain("GROUP BY", query.Sql, StringComparison.Ordinal);
+        Assert.Contains("COUNT(*) AS \"c\"", query.Sql, StringComparison.Ordinal);
+    }
+
     /// <summary>logs IN 过滤：多值逐个参数绑定.</summary>
     [Fact]
     public void Logs_InFilter_Parametrized()

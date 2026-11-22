@@ -1,9 +1,18 @@
 namespace SData.Store.Models;
 
 /// <summary>
+/// 可缓存缓冲字节估算的记录（估算一次，入队与落库释放两处复用）.
+/// </summary>
+public interface IEstimatedBytes
+{
+    /// <summary>缓冲字节估算缓存；-1 = 未计算.</summary>
+    long EstimatedBytesCache { get; set; }
+}
+
+/// <summary>
 /// 日志记录.
 /// </summary>
-public class LogRecord
+public class LogRecord : IEstimatedBytes
 {
     /// <summary>
     /// 行级雪花 id（0 = 未赋值，落库时由写入器统一补齐；幂等去重/行级定位用）.
@@ -54,12 +63,16 @@ public class LogRecord
     /// 日志来源（ES Bulk 的 _index / Filebeat 索引名；其余通道为空）.
     /// </summary>
     public string? Source { get; set; }
+
+    /// <inheritdoc/>
+    public long EstimatedBytesCache { get => Volatile.Read(ref _estimatedBytes); set => Volatile.Write(ref _estimatedBytes, value); }
+    private long _estimatedBytes = -1;
 }
 
 /// <summary>
 /// Span 记录.
 /// </summary>
-public class SpanRecord
+public class SpanRecord : IEstimatedBytes
 {
     /// <summary>
     /// trace id.
@@ -120,12 +133,16 @@ public class SpanRecord
     /// 资源信息（JSON 对象字符串）.
     /// </summary>
     public string? ResourceJson { get; set; }
+
+    /// <inheritdoc/>
+    public long EstimatedBytesCache { get => Volatile.Read(ref _estimatedBytes); set => Volatile.Write(ref _estimatedBytes, value); }
+    private long _estimatedBytes = -1;
 }
 
 /// <summary>
 /// 指标数据点.
 /// </summary>
-public class MetricPointRecord
+public class MetricPointRecord : IEstimatedBytes
 {
     /// <summary>
     /// 指标名.
@@ -151,12 +168,16 @@ public class MetricPointRecord
     /// 类型：gauge / sum / histogram.
     /// </summary>
     public string Kind { get; set; } = "gauge";
+
+    /// <inheritdoc/>
+    public long EstimatedBytesCache { get => Volatile.Read(ref _estimatedBytes); set => Volatile.Write(ref _estimatedBytes, value); }
+    private long _estimatedBytes = -1;
 }
 
 /// <summary>
 /// 物联网遥测记录（窄表）.
 /// </summary>
-public class TelemetryRecord
+public class TelemetryRecord : IEstimatedBytes
 {
     /// <summary>
     /// 设备标识.
@@ -187,6 +208,10 @@ public class TelemetryRecord
     /// 质量码：0 = good.
     /// </summary>
     public int Quality { get; set; }
+
+    /// <inheritdoc/>
+    public long EstimatedBytesCache { get => Volatile.Read(ref _estimatedBytes); set => Volatile.Write(ref _estimatedBytes, value); }
+    private long _estimatedBytes = -1;
 }
 
 /// <summary>

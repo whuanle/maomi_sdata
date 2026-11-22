@@ -297,6 +297,12 @@ public class IngestBuffer : IIngestBuffer
             && bytes <= _byteBudgetBytes - current;
     }
 
+    /// <inheritdoc/>
+    public int ApproximateBufferedCount => _channel.Reader.Count;
+
+    /// <inheritdoc/>
+    public int Capacity => _capacity;
+
     private bool TryReserveBytes(long bytes)
     {
         if (bytes <= 0)
@@ -339,7 +345,16 @@ public class IngestBuffer : IIngestBuffer
     private static long EstimateRecord(object record)
     {
         const long fixedCost = 64;
-        return record switch
+        if (record is IEstimatedSize cached)
+        {
+            var cachedValue = cached.EstimatedBytesCache;
+            if (cachedValue >= 0)
+            {
+                return cachedValue;
+            }
+        }
+
+        var estimated = record switch
         {
             LogRecord log => fixedCost
                 + Utf8(log.Service) + Utf8(log.Severity) + Utf8(log.Body)
@@ -355,6 +370,19 @@ public class IngestBuffer : IIngestBuffer
                 + Utf8(telemetry.Signal) + Utf8(telemetry.StrValue),
             _ => fixedCost + 128,
         };
+        if (record is IEstimatedSize cacheable)
+        {
+            cacheable.EstimatedBytesCache = estimated;
+        }
+
+        return estimated;
+    }
+
+    /// <summary>缓冲字节估算可缓存的记录.</summary>
+    private interface IEstimatedSize
+    {
+        /// <summary>估算缓存；-1 = 未计算.</summary>
+        long EstimatedBytesCache { get; set; }
     }
 
     private static long Utf8(string? value)

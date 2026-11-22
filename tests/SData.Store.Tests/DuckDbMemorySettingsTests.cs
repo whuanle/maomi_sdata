@@ -21,7 +21,7 @@ public class DuckDbMemorySettingsTests
             await manager.InitializeAsync();
             using var existing = manager.CloneConnection();
             var old = await ReadLimitAsync(existing);
-            await manager.ApplyMemoryLimitAsync("2GB", default);
+            await manager.ApplyMemoryLimitAsync("3GB", default);
             Assert.NotEqual(old, manager.EffectiveMemoryLimit);
             Assert.Equal(manager.EffectiveMemoryLimit, await ReadLimitAsync(existing));
             using var fresh = manager.CloneConnection();

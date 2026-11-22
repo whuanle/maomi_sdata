@@ -76,24 +76,42 @@ public class QueryDslExecutorService : IQueryDslExecutor
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var compiled = QueryDslCompiler.Compile(model, domain, resolved);
+        var columnar = model.Columnar;
         var response = await _connectionManager.QueryAsync(compiled.Sql, compiled.Parameters, async reader =>
         {
-            var result = new SearchDslResponse();
+            var result = new SearchDslResponse { Columnar = columnar };
             var fieldCount = reader.FieldCount;
             for (var i = 0; i < fieldCount; i++)
             {
                 result.Columns.Add(reader.GetName(i));
             }
 
-            while (await reader.ReadAsync(cancellationToken))
+            if (columnar)
             {
-                var row = new Dictionary<string, object?>(StringComparer.Ordinal);
-                for (var i = 0; i < fieldCount; i++)
+                result.RowsArrays = [];
+                while (await reader.ReadAsync(cancellationToken))
                 {
-                    row[reader.GetName(i)] = ConvertValue(reader.GetValue(i));
-                }
+                    var row = new List<object?>(fieldCount);
+                    for (var i = 0; i < fieldCount; i++)
+                    {
+                        row.Add(ConvertValue(reader.GetValue(i)));
+                    }
 
-                result.Rows.Add(row);
+                    result.RowsArrays.Add(row);
+                }
+            }
+            else
+            {
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var row = new Dictionary<string, object?>(StringComparer.Ordinal);
+                    for (var i = 0; i < fieldCount; i++)
+                    {
+                        row[reader.GetName(i)] = ConvertValue(reader.GetValue(i));
+                    }
+
+                    result.Rows.Add(row);
+                }
             }
 
             return result;

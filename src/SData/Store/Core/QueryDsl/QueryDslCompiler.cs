@@ -238,7 +238,9 @@ public static class QueryDslCompiler
 
         var order = BuildAggregateOrderBy(model.Sort, aliases, hasBucket: model.Bucket != null);
         ResolveLimit(model.Limit, parameters);
-        return $"SELECT {string.Join(", ", select)} FROM ({Union(resolved, domain)}){WhereClause(where)} GROUP BY {string.Join(", ", groupBy)}{order} LIMIT $limit";
+        // 仅聚合无分组（aggregations 非空且无 bucket/groupBy）= 全局聚合，不输出 GROUP BY
+        var groupBySql = groupBy.Count > 0 ? $" GROUP BY {string.Join(", ", groupBy)}" : string.Empty;
+        return $"SELECT {string.Join(", ", select)} FROM ({Union(resolved, domain)}){WhereClause(where)}{groupBySql}{order} LIMIT $limit";
     }
 
     private static string BuildAggregateExpression(QueryAggregation aggregation, DataDomain domain, Dictionary<string, FieldSpec> schema, List<DuckDBParameter> parameters, HashSet<string> aliases)

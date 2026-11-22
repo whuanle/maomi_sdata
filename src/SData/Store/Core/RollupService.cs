@@ -17,7 +17,8 @@ public class RollupService : BackgroundService
     private static readonly TimeSpan Window5m = TimeSpan.FromMinutes(60);
     private static readonly TimeSpan Window1h = TimeSpan.FromHours(4);
 
-    private const int LateBuckets = 2;
+    /// <summary>迟到数据回看窗口（固定时间跨度，避免 1h 桶按桶数回看放大成数小时重算）.</summary>
+    private static readonly TimeSpan LateWindow = TimeSpan.FromMinutes(10);
 
     private readonly DuckDbConnectionManager _connectionManager;
     private readonly ILogger<RollupService> _logger;
@@ -89,7 +90,7 @@ public class RollupService : BackgroundService
         var watermark = await LoadWatermarkAsync(table, cancellationToken);
         if (watermark.HasValue)
         {
-            from = Max(from, watermark.Value - (step * LateBuckets));
+            from = Max(from, watermark.Value - LateWindow);
         }
 
         var tables = _connectionManager.GetDayTables(TimeTables.MetricsPrefix, from, to);

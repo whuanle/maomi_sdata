@@ -68,6 +68,12 @@ public class QueryDslModel
     /// 行数上限（缺省 50，上限 10000）.
     /// </summary>
     public int? Limit { get; set; }
+
+    /// <summary>
+    /// 列式响应开关（缺省 false）：true 时响应 rows 为空、rowsArrays 与 columns 对齐，
+    /// 大 limit 原始行查询可省去每行字典物化开销.
+    /// </summary>
+    public bool Columnar { get; set; }
 }
 
 /// <summary>
@@ -147,6 +153,7 @@ public class QuerySort
 
 /// <summary>
 /// 统一查询 DSL 响应（列式）：聚合模式列为 bucket/分组字段/聚合别名；原始行模式列为域物理列名.
+/// 请求 Columnar=true 时 Rows 为空、RowsArrays 与 Columns 对齐.
 /// </summary>
 public class SearchDslResponse
 {
@@ -155,6 +162,12 @@ public class SearchDslResponse
 
     /// <summary>数据行（键=列名；时间值为 UTC DateTimeOffset）.</summary>
     public List<Dictionary<string, object?>> Rows { get; set; } = new();
+
+    /// <summary>列式数据行（与 Columns 对齐；仅请求 Columnar=true 时填充）.</summary>
+    public List<List<object?>>? RowsArrays { get; set; }
+
+    /// <summary>是否列式响应.</summary>
+    public bool Columnar { get; set; }
 
     /// <summary>执行耗时（毫秒）.</summary>
     public long Took { get; set; }

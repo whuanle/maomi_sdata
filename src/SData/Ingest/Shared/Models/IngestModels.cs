@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace SData.Ingest;
 
 /// <summary>
@@ -36,14 +38,14 @@ public class IngestLogItem
     public string? SpanId { get; set; }
 
     /// <summary>
-    /// 属性.
+    /// 属性（JSON 对象，绑定后保留原始元素直通，避免字典二跳转换）.
     /// </summary>
-    public Dictionary<string, object?>? Attributes { get; set; }
+    public JsonElement? Attributes { get; set; }
 
     /// <summary>
-    /// 资源.
+    /// 资源（JSON 对象，绑定后保留原始元素直通）.
     /// </summary>
-    public Dictionary<string, object?>? Resource { get; set; }
+    public JsonElement? Resource { get; set; }
 }
 
 /// <summary>
@@ -78,11 +80,11 @@ public class IngestSpanItem
     /// <summary>状态（unset/ok/error）.</summary>
     public string? Status { get; set; }
 
-    /// <summary>属性.</summary>
-    public Dictionary<string, object?>? Attributes { get; set; }
+    /// <summary>属性（JSON 对象，绑定后保留原始元素直通）.</summary>
+    public JsonElement? Attributes { get; set; }
 
-    /// <summary>资源.</summary>
-    public Dictionary<string, object?>? Resource { get; set; }
+    /// <summary>资源（JSON 对象，绑定后保留原始元素直通）.</summary>
+    public JsonElement? Resource { get; set; }
 }
 
 /// <summary>
@@ -99,8 +101,8 @@ public class IngestMetricItem
     /// <summary>值.</summary>
     public double Value { get; set; }
 
-    /// <summary>标签.</summary>
-    public Dictionary<string, object?>? Labels { get; set; }
+    /// <summary>标签（JSON 对象，绑定后保留原始元素直通）.</summary>
+    public JsonElement? Labels { get; set; }
 
     /// <summary>类型（gauge/sum）.</summary>
     public string? Kind { get; set; }

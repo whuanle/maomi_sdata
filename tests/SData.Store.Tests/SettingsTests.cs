@@ -322,9 +322,9 @@ public class SettingsTests
         harness.Provider.GetDuckDb();
         await harness.Db.Database.ExecuteSqlRawAsync("DROP TABLE setting");
         var service = new DuckDbSettingsService(harness.Provider, runtime, NullLogger<DuckDbSettingsService>.Instance);
-        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => service.SaveAsync("2GB", default));
-        Assert.Equal("512MB", runtime.MemoryLimit);
-        Assert.Equal("512MB", harness.Provider.GetDuckDb().MemoryLimit);
+        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => service.SaveAsync("3GB", default));
+        Assert.Equal("512MB", runtime.MemoryLimit); // 恢复到保存前的运行值（FakeRuntime 初始值）
+        Assert.Equal("2GB", harness.Provider.GetDuckDb().MemoryLimit); // 无持久化覆盖时回退文件默认（现默认 2GB）
     }
 
     [Fact]

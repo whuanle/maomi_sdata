@@ -17,6 +17,12 @@ public interface IIngestBuffer
     /// <summary>预检整批字节是否可容纳；估算超预算时调用方应在解析后/入队前返回 429.</summary>
     bool CanAcceptBytes(long bytes) => true;
 
+    /// <summary>缓冲当前条数（近似值，供背压快速拒绝使用）.</summary>
+    int ApproximateBufferedCount => 0;
+
+    /// <summary>缓冲条数容量（超过即背压拒绝）.</summary>
+    int Capacity => 0;
+
     /// <summary>批量写入日志；失败条数仍按单条缓冲满载计数.</summary>
     (long Accepted, long Dropped, IReadOnlyList<LogRecord> Rejected) TryEnqueueLogs(IReadOnlyList<LogRecord> records)
         => EnqueueBatch(records, TryEnqueueLog);

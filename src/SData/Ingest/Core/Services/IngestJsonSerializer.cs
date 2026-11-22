@@ -13,4 +13,21 @@ internal static class IngestJsonSerializer
             ? null
             : JsonSerializer.Serialize(values, Options);
     }
+
+    /// <summary>
+    /// 原始 JSON 元素直通：取原始文本，避免字典化再回序列化的二跳开销.
+    /// </summary>
+    /// <param name="element">绑定后保留的原始元素.</param>
+    /// <returns>JSON 文本；空/Undefined/Null 返回 null.</returns>
+    internal static string? Serialize(JsonElement? element)
+    {
+        if (!element.HasValue)
+        {
+            return null;
+        }
+
+        return element.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+            ? null
+            : element.Value.GetRawText();
+    }
 }

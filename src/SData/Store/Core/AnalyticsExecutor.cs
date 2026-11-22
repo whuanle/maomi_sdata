@@ -250,32 +250,38 @@ public partial class AnalyticsExecutor : IAnalyticsExecutor
         cancellationToken.ThrowIfCancellationRequested();
         var started = DateTimeOffset.UtcNow;
         await using var connection = _connectionManager.CloneConnection();
-        await using var command = ((DuckDBConnection)connection).CreateCommand();
-        var limitName = "sdata_result_limit";
-        while (sql.Contains("$" + limitName, StringComparison.OrdinalIgnoreCase)
-            || parameters?.Any(parameter => string.Equals(parameter.ParameterName.TrimStart('$'), limitName, StringComparison.OrdinalIgnoreCase)) == true)
-        {
-            limitName += "_";
-        }
-
-        command.CommandText = $"SELECT * FROM (\n{sql}\n) AS sdata_bounded_result LIMIT CAST(${limitName} AS BIGINT)";
-        command.UseStreamingMode = true;
-        command.Parameters.Add(new DuckDBParameter(limitName, rowLimit + 1));
-        if (parameters != null)
-        {
-            foreach (var parameter in parameters)
-            {
-                command.Parameters.Add(parameter);
-            }
-        }
-
-        await using var timer = new Timer(_ =>
-        {
-            if (cancellationToken.IsCancellationRequested) command.Cancel();
-        }, null, 50, 50);
-        var result = new AnalyticsQueryResult();
+        await using var command = connection.CreateCommand();
+        Timer? watchdog = null;
         try
         {
+            var limitName = "sdata_result_limit";
+            while (sql.Contains("$" + limitName, StringComparison.OrdinalIgnoreCase)
+                || parameters?.Any(parameter => string.Equals(parameter.ParameterName.TrimStart('$'), limitName, StringComparison.OrdinalIgnoreCase)) == true)
+            {
+                limitName += "_";
+            }
+
+            command.CommandText = $"SELECT * FROM (\n{sql}\n) AS sdata_bounded_result LIMIT CAST(${limitName} AS BIGINT)";
+            command.UseStreamingMode = true;
+            command.Parameters.Add(new DuckDBParameter(limitName, rowLimit + 1));
+            if (parameters != null)
+            {
+                foreach (var parameter in parameters)
+                {
+                    command.Parameters.Add(parameter);
+                }
+            }
+
+            // watchdog 惰性创建：仅在预算截止触发后周期 Cancel，避免每查询常驻定时器
+            using var watchdogRegistration = cancellationToken.Register(() =>
+            {
+                if (watchdog == null)
+                {
+                    watchdog = new Timer(_ => { try { command.Cancel(); } catch (ObjectDisposedException) { } }, null, 0, 50);
+                }
+            });
+
+            var result = new AnalyticsQueryResult();
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             for (var i = 0; i < reader.FieldCount; i++)
             {
@@ -298,16 +304,20 @@ public partial class AnalyticsExecutor : IAnalyticsExecutor
 
                 result.Rows.Add(row);
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            result.ElapsedMs = (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds;
+            return result;
         }
         catch (DuckDBException ex) when (ex.Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase))
         {
             // 按天分表在当天首次写入时才创建：查询不存在的日期分表属于用户可修正的输入问题，转业务错误而非 500
             throw BusinessException.Throw(400, "查询的数据表不存在（按天分表在当天首次写入数据后才会创建），请确认表名与日期");
         }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        result.ElapsedMs = (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds;
-        return result;
+        finally
+        {
+            watchdog?.Dispose();
+        }
         }, CancellationToken.None);
     }
 

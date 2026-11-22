@@ -10,6 +10,7 @@ namespace SData.Ingest.Api;
 [ApiController]
 [Route("ingest")]
 [ServiceFilter(typeof(IngestApiKeyFilter))]
+[IngestBackpressure]
 public class IngestController : ControllerBase
 {
     private readonly SData.Ingest.IIngestIngestor _ingestor;

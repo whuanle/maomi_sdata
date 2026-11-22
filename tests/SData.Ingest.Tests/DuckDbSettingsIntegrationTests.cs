@@ -45,7 +45,7 @@ public class DuckDbSettingsIntegrationTests
                 await app.StartAsync();
                 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
                 using var client = new HttpClient { BaseAddress = new Uri(address) };
-                var payload = new { memoryLimit = "2GB" };
+                var payload = new { memoryLimit = "3GB" };
                 Assert.Equal(HttpStatusCode.Unauthorized, (await client.PutAsJsonAsync("/api/settings/duckdb", payload)).StatusCode);
                 foreach (var role in new[] { "readonly", "write" })
                 {
@@ -58,19 +58,19 @@ public class DuckDbSettingsIntegrationTests
                 var saved = await client.PutAsJsonAsync("/api/settings/duckdb", payload);
                 Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
                 var result = (await saved.Content.ReadFromJsonAsync<DuckDbSettingsResponse>())!;
-                Assert.Equal("2GB", result.MemoryLimit);
+                Assert.Equal("3GB", result.MemoryLimit);
                 Assert.Equal(app.Services.GetRequiredService<IDuckDbRuntimeSettings>().EffectiveMemoryLimit, result.EffectiveMemoryLimit);
                 var queried = (await client.GetFromJsonAsync<SettingsResponse>("/api/settings"))!;
                 Assert.Equal(result.EffectiveMemoryLimit, queried.DuckDb.EffectiveMemoryLimit);
-                Assert.Equal("2GB", queried.DuckDb.MemoryLimit);
+                Assert.Equal("3GB", queried.DuckDb.MemoryLimit);
                 await app.StopAsync();
             }
 
             await using (var restarted = Build(options, key))
             {
                 await restarted.StartAsync();
-                Assert.Equal("2GB", restarted.Services.GetRequiredService<IDuckDbRuntimeSettings>().MemoryLimit);
-                Assert.Equal("512MB", options.DuckDb.MemoryLimit);
+                Assert.Equal("3GB", restarted.Services.GetRequiredService<IDuckDbRuntimeSettings>().MemoryLimit);
+                Assert.Equal("2GB", options.DuckDb.MemoryLimit);
                 await restarted.StopAsync();
             }
         }
