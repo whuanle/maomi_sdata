@@ -1,27 +1,47 @@
 SData portable release
 ======================
-Windows x64: run powershell -File .\start.ps1 from the extracted folder.
-Linux/macOS: run ./start.sh. Self-contained: no .NET/Node installation needed.
-On first launch, supply SDATA_INITIAL_ADMIN_PASSWORD through your environment
-(at least 12 characters), or enter it at the hidden prompt. No default password
-is included in this package. Then open http://localhost:5300 and log in as admin.
+Self-contained: no .NET or Node.js installation needed.
 
-The launcher initializes configs/system.json only if missing. Configs and data
-are stored beside the executable; both directories must be writable. Keep these
-directories (including the locally generated JWT private key) during upgrades.
-Back up first, stop the old service and extract new binaries into a NEW folder,
-then copy your configs/data before starting. Never overlay a running instance.
-To use your own config set SDATA_FILE to its absolute path; it must exist.
-The external config path does not relocate data or the JWT key automatically.
-Use unique credentials and TLS before exposing the service outside localhost.
+Windows x64: double-click SData.exe in the extracted folder (or run it from a terminal).
+Linux/macOS: from the extracted folder, run ./SData
+
+Then open http://localhost:5300 and sign in as admin. The initial password is
+SData:Auth:InitialAdminPassword in appsettings.json (sdata@123 in this package). The
+program has no built-in password, and a fresh database cannot start without one.
+Change it in the UI after the first sign-in, and use unique credentials and TLS before
+exposing the service outside localhost.
+
+Configuration:
+  appsettings.json          console logging, plus settings that have no page in the web UI
+                            (HTTP port, data paths, DuckDB resources, initial admin password,
+                            ingest buffer, alert and agent budgets, listeners, origin lists).
+                            Every value has a built-in default.
+  configs/appsettings.json  created on first start as a copy of appsettings.json, only when
+                            missing. Edit it to override any value above. Not in this package.
+  environment variables     highest priority, using "__" for nested keys, for example
+                            SData__Port=5301 or SData__DuckDb__Threads=4.
+  web UI                    business settings (S3 cold storage, retention, compression,
+                            OTLP, log consumption, DuckDB memory limit, notification
+                            channels, RUM sites, API keys) are configured in the UI and
+                            stored in the database. Saved values take precedence.
+Logs are written to the console only.
+
+Runtime state is created beside the executable and must stay writable:
+  data/                     SQLite (sdata.db) and DuckDB (sdata.duckdb)
+  configs/rsa_private.key   JWT signing key, generated on first start
+Keep both during upgrades. Back up first, stop the old service, extract the new
+binaries into a NEW folder, copy data/, configs/rsa_private.key and any
+configs/appsettings.json over, then start. Never overlay a running instance. Keep the
+environment variables you set for the old service.
+
+HTTP listens on SData:Port (5300 by default). The embedded MQTT broker listens on 1883;
+set SData__Mqtt__Port to change it.
 
 Linux archives require a glibc-based .NET 10-supported distribution and its
 system dependencies (ICU, OpenSSL, zlib, libc/libgcc/libstdc++). Alpine/musl is not
 supported. macOS archives are not Developer ID signed or notarized: review the
 source/checksum and use the OS security UI to approve execution if required.
 Do not disable Gatekeeper globally. Windows ARM64 is not a supported target.
-MQTT listens on port 1883 by default; HTTP uses 5300. Change configs/system.json
-before startup if these ports are occupied.
 
 SHA256SUMS.txt in the GitHub Release lists archive checksums. All native-library
 files shipped with this package must remain beside their published paths.

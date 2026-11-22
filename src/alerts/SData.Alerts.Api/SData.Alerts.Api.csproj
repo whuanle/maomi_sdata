@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn></PropertyGroup>
-  <ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <ProjectReference Include="$(RepoRoot)/src/alerts/SData.Alerts.Shared/SData.Alerts.Shared.csproj" />
-    <ProjectReference Include="$(RepoRoot)/src/infra/SData.Infra.Api/SData.Infra.Api.csproj" />
-  </ItemGroup>
-</Project>

@@ -4,6 +4,50 @@
 
 Feature: 数据接入
 
+  @INGEST-S8 @auto:e2e
+  Scenario: Go 接入保留遥测内容与时间精度
+    Given 遥测包含服务资源、属性、事件、关联标识及大整数时间
+    When 通过文本或二进制格式提交日志、链路和指标
+    Then 日志与指标时间按毫秒保存，链路时间和时长按微秒保存且倒序时长为零
+    Then 全部有值指标点含零值被保留，直方图按既有格式规则生成计数与总和序列
+
+  @INGEST-S9 @auto:e2e
+  Scenario: Go 接入保持各传输的反馈与有界读取
+    Given 接入内容可以压缩且缓冲有容量限制
+    When 提交合法、损坏、超大或被缓冲拒绝的内容
+    Then 成功不携带拒绝信息，失败不得伪报成功，拒绝反馈遵循各传输既有规则
+    Then 解压内容参与字节预算，超大内容不会进入缓冲
+
+  @INGEST-S10 @auto:e2e
+  Scenario: Go 遥测入口要求有效接入凭据
+    Given 服务提供文本与远程调用两类遥测入口
+    When 客户端省略凭据、重复提交凭据或携带无效凭据
+    Then 接入被拒绝且不会写入缓冲
+
+  @INGEST-PF11 @auto:xunit
+  Scenario: 接入字节预算超限返回背压
+    Given 接入缓冲字节预算为 256 MiB
+    When 简单 JSON、OTLP 或 ES Bulk 请求在估算字节或解析前超出可用预算
+    Then 请求返回 HTTP 429、携带 Retry-After 且不入队或只计整批丢弃，不伪报已接收
+
+  @INGEST-PF09 @auto:xunit
+  Scenario: MQ 批量入缓冲只重试被拒记录
+    Given MQ 消息批量解析为日志记录且接入缓冲容量不足
+    When 第一批提交发生部分拒绝
+    Then 已接受记录不重复入队，仅被拒记录退避重试后进入缓冲，原消息仍保持未确认直至持久化回执完成
+
+  @INGEST-PF08 @auto:xunit
+  Scenario: 简单 JSON 批量按批入缓冲
+    Given 接入请求包含日志、链路、指标或遥测记录
+    When 提交批量简单 JSON
+    Then 四类记录经单次批量缓冲提交并返回各自接受数与丢弃数，缓冲满仍逐条计数丢弃
+
+  @INGEST-PF12 @auto:xunit
+  Scenario: OTLP HTTP 压缩与非压缩请求保持一致解析
+    Given OTLP/HTTP 接收 JSON 或 protobuf 请求体
+    When 请求体为普通内容或 gzip 内容
+    Then 请求体只经一条读取/解压路径，解析结果相同，span event 属性直接写入 JSON 输出
+
   @INGEST-MQ16 @auto:xunit
   Scenario: 消费失败自动退避并支持立即重试
     Given 消费实例出现未恢复失败

@@ -1,6 +1,8 @@
 using Maomi;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.EnvironmentVariables;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Serilog;
 using Serilog.Configuration;
 using Serilog.Settings.Configuration;
@@ -15,18 +17,16 @@ namespace SData;
 public static class MainExtensions
 {
     /// <summary>
-    /// 构建宿主：导入配置 → SystemOptions → Serilog → 模块系统.
+    /// 构建宿主：SystemOptions（appsettings.json）→ Serilog（仅控制台）→ 模块系统.
     /// </summary>
     /// <param name="builder">构建器.</param>
     /// <returns>构建器.</returns>
     public static WebApplicationBuilder UseSData(this WebApplicationBuilder builder)
     {
         AppConst.ContentRoot = builder.Environment.ContentRootPath;
+        AddConfigsOverride(builder);
 
-        ImportSystemConfiguration(builder);
-
-        var systemOptions = builder.Configuration.GetSection("SData").Get<SystemOptions>()
-            ?? throw new FormatException("The system configuration (SData section) cannot be loaded.");
+        var systemOptions = builder.Configuration.GetSection("SData").Get<SystemOptions>() ?? new SystemOptions();
 
         // 监听端口
         builder.WebHost.UseUrls($"http://0.0.0.0:{systemOptions.Port}");
@@ -34,10 +34,8 @@ public static class MainExtensions
         builder.Services.AddSerilog((services, loggerConfiguration) =>
         {
             // 单文件发布下 Serilog 无法靠扫描磁盘目录发现 sink 程序集，需显式声明，
-            // 否则 ReadFrom.Configuration 抛 "no Serilog:Using ... published as single-file"。
-            var sinkOptions = new ConfigurationReaderOptions(
-                typeof(ConsoleLoggerConfigurationExtensions).Assembly,
-                typeof(FileLoggerConfigurationExtensions).Assembly);
+            // 否则 ReadFrom.Configuration 抛 "no Serilog:Using ... published as single-file"。日志只输出到控制台。
+            var sinkOptions = new ConfigurationReaderOptions(typeof(ConsoleLoggerConfigurationExtensions).Assembly);
             loggerConfiguration
                 .ReadFrom.Configuration(builder.Configuration, sinkOptions)
                 .ReadFrom.Services(services)
@@ -52,6 +50,48 @@ public static class MainExtensions
 
         builder.Services.AddModule<MainModule>();
         return builder;
+    }
+
+    /// <summary>
+    /// configs/appsettings.json 不存在时复制内容根目录下的 appsettings.json（Docker 挂载的 configs 通常为空）；已存在则不覆盖.
+    /// </summary>
+    /// <param name="contentRoot">内容根目录.</param>
+    internal static void EnsureConfigsAppSettings(string contentRoot)
+    {
+        var source = Path.Combine(contentRoot, "appsettings.json");
+        var directory = Path.Combine(contentRoot, AppConst.ConfigsDirectory);
+        var target = Path.Combine(directory, "appsettings.json");
+        if (File.Exists(target) || !File.Exists(source))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(directory);
+        File.Copy(source, target);
+    }
+
+    /// <summary>
+    /// 加载 configs/appsettings.json（可选）覆盖程序目录的 appsettings.json；优先级仍低于环境变量与命令行参数.
+    /// </summary>
+    /// <param name="builder">构建器.</param>
+    private static void AddConfigsOverride(WebApplicationBuilder builder)
+    {
+        EnsureConfigsAppSettings(AppConst.ContentRoot);
+
+        var directory = AppConst.GetPath(AppConst.ConfigsDirectory);
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        var configuration = builder.Configuration;
+        configuration.AddJsonFile(new PhysicalFileProvider(directory), "appsettings.json", optional: true, reloadOnChange: false);
+
+        // 新源追加在末尾，移到最后一个环境变量源之前：appsettings.json < configs/appsettings.json < 环境变量 < 命令行
+        var sources = configuration.Sources;
+        var added = sources[sources.Count - 1];
+        sources.RemoveAt(sources.Count - 1);
+        sources.Insert(sources.IndexOf(sources.Last(source => source is EnvironmentVariablesConfigurationSource)), added);
     }
 
     /// <summary>
@@ -112,54 +152,5 @@ public static class MainExtensions
         }
 
         return app;
-    }
-
-    private static void ImportSystemConfiguration(WebApplicationBuilder builder)
-    {
-        // 加载顺序：SDATA_FILE 环境变量 → 当前目录/内容根/程序目录及其上级目录的 configs
-        var candidates = new List<string>();
-
-        var file = Environment.GetEnvironmentVariable("SDATA_FILE");
-        if (!string.IsNullOrEmpty(file))
-        {
-            candidates.Add(file);
-        }
-
-        var roots = new List<string>
-        {
-            Directory.GetCurrentDirectory(),
-            AppConst.ContentRoot,
-            AppContext.BaseDirectory,
-        };
-
-        // dotnet run 时内容根是项目目录，向上查找仓库根的 configs
-        foreach (var root in roots.ToArray())
-        {
-            var directory = new DirectoryInfo(root);
-            for (var i = 0; i < 3 && directory != null; i++)
-            {
-                roots.Add(directory.FullName);
-                directory = directory.Parent;
-            }
-        }
-
-        foreach (var root in roots)
-        {
-            candidates.Add(Path.Combine(root, "configs", "system.yaml"));
-            candidates.Add(Path.Combine(root, "configs", "system.json"));
-        }
-
-        var configFile = candidates.FirstOrDefault(File.Exists)
-            ?? throw new FileNotFoundException("System config not found (configs/system.yaml). Set SDATA_FILE to override.");
-
-        var extension = Path.GetExtension(configFile).ToLowerInvariant();
-        if (extension is ".yaml" or ".yml")
-        {
-            builder.Configuration.AddYamlFile(configFile, optional: false, reloadOnChange: false);
-        }
-        else
-        {
-            builder.Configuration.AddJsonFile(configFile, optional: false, reloadOnChange: false);
-        }
     }
 }

@@ -7,6 +7,7 @@ using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Metrics;
 using SData.Metrics.Promql;
+using SData.Settings.Services;
 using SData.Store;
 using SData.Store.Core;
 using SData.Store.QueryDsl;
@@ -52,9 +53,9 @@ public class PanelQueryExecutorTests : IDisposable
 
         _executor = new PanelQueryExecutor(
             new MetricStore(_connectionManager, options),
-            new QueryDslExecutorService(_connectionManager, options, resolver),
-            new AnalyticsExecutor(_connectionManager, options, resolver, NullLogger<AnalyticsExecutor>.Instance),
-            new PromqlExecutor(_connectionManager, resolver, options),
+            new QueryDslExecutorService(_connectionManager, SystemSettingsProvider.FileOnly(options), resolver),
+            new AnalyticsExecutor(_connectionManager, options, SystemSettingsProvider.FileOnly(options), resolver, NullLogger<AnalyticsExecutor>.Instance),
+            new PromqlExecutor(_connectionManager, resolver, SystemSettingsProvider.FileOnly(options)),
             databaseContext,
             NullLogger<PanelQueryExecutor>.Instance);
     }

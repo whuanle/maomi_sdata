@@ -2,6 +2,9 @@
 
 > 关联：[sdd](sdd.md) · [bdd](bdd.md) · [tdd](tdd.md)
 
+- Go 后端验收先核对[兼容实现边界](sdd.md#go-兼容实现边界2026-11-22)：200且标记`applied`才表示即时应用；202及`stored-not-applied`只表示配置入库，**重启不保证补齐尚未实现的消费者**。S3测试或未接入监听器的MQTT修改返回501是显式能力边界，不应通过放宽认证或伪造成功绕过。
+- Go集成需替换旧设置路由并在请求及后台工作开始前执行`initializeSettings`，共享`App.Settings`；业务默认值、通知`AllowedOrigins`和实际运行消费者由宿主传入。Go凭据恢复依赖原数据库内Go签名材料，备份时限制整库权限；C# Data Protection密文不能由Go直接恢复，须显式重置Key或重新配置通知，不自动覆盖历史秘密。出现配置回退警告时按日志中的`system:*`键检查历史配置，不开启秘密值日志。
+- Go定向回归：在`go`目录执行`go test .\internal\settings`及配置本机DuckDB动态库后的`go test -tags duckdb_use_lib .\cmd\sdata -run '^TestSettings'`。测试仅新建并清理项目内测试库，不操作现有部署或发送真实第三方通知。
 - DuckDB：管理员打开 `/settings?tab=duckdb`，将 `512MB` 手动改为 `1GB`、`2GB` 等并保存，核对当前生效值（DuckDB可能显示MiB/GiB）；保存后立即生效，重启后按SQLite覆盖恢复。MB/GB十进制，MiB/GiB二进制。务必先确认宿主/容器余量；此值不是整个进程硬上限，调小不保证立即释放RSS。失败检查日志；恢复也失败时核对当前生效值，协调重启以恢复持久化设置，不删库或WAL。
 - DuckDB页签提示后端未提供设置时，先更新并重启后端服务，再点击「重试」；前端开发热更新不会自动替换运行中的后端DLL。不要将缺字段解释为512MB或允许保存未知值，其他设置页签仍可正常使用。
 - 一天观察：已启用并保存 S3 时，在 S3 页将转冷前本地保留设为 1 天并保存，再到数据保留页核对冷存天数（该页不再重复编辑本地天数）。冷存天数保持原值且必须 >0；IoT 默认冷层关闭，Sessions 包含会话、事件、回放，共用 Rum 策略。UTC 日期切换后下一轮扫描（每 10 分钟）归档上一完整日期；北京时间今天的数据需明天 08:00 后观察。运行实例需管理员登录，文件默认值不能覆盖已保存的数据库设置。
@@ -13,21 +16,21 @@
 - 设置页 `/settings`（管理员）：改 S3 冷存储/保留天数/压缩编码**无需重启**；OTLP 导出需重启；MQ 日志消费在「日志消费」页 `/log-consumption` 管理（多实例），保存后消费管理器**10s 内自动热更新**，无需重启。
 - S3 保存即重建 SECRET：改完可直接归档入桶；重启后 `StoreInitializer` 自动按设置页持久化值重建 SECRET（无需重配，@STORE-COLD5）；「测试连接」会向桶写入数百字节的 `.sdata-conn-test.parquet`（保留不清理，如需彻底干净可手动删除该对象）。
 - SecretKey 页面掩码返回（`******`）：留空或保持掩码保存 = 沿用原密钥；换密钥直接输入新值。
-- 合并语义：设置页保存值（SQLite `setting` 表）优先于 `configs/system.yaml`；清空某项走页面操作而非删表行。误配置的键值可经 `DELETE FROM setting WHERE Key='system:xxx'` 后重启回退文件默认（应急通道，慎用）。
+- 合并语义：设置页保存值（SQLite `setting` 表）为准。有页面入口的设置（S3、三段保留、数据压缩、OTLP、日志消费、DuckDB 内存上限）以数据库为准，未保存时使用默认值（代码或配置文件）；清空某项走页面操作而非删表行。误配置的键值可经 `DELETE FROM setting WHERE Key='system:xxx'` 后重启回退代码默认（应急通道，慎用）。
 - S3 关闭（endpoint 置空保存）后，数据保留页恢复完整本地/冷存天数，S3 页不展示归档策略；草稿开关或连接测试不改变展示模式。冷存=0 不归档、热到期直接删除，不代表冷数据永久保留；本地保留=0 沿用旧配置，并非立即归档。归档回退本地 `data/cold/`；已上桶的历史对象不迁移不删除，查询仍经 read_parquet 合并（ SECRET 已换则历史对象不可读，换桶/换密钥前先评估）。
 - 压缩页验收：上方选择/保存操作独立成区，下方适用范围与编码参考在桌面双列、窄屏单列展示；中英文均应完整换行，不横向溢出。亮暗主题下检查标题、说明层级与按钮可见性。
 - 数据压缩仅设置 S3 或本地 `data/cold/` 冷归档 Parquet 文件的压缩方式，不压缩 DuckDB 数据库文件、不影响 SQLite 元数据；未启用归档的数据不受影响。保存后**下一轮归档**（最长约 10 分钟）使用新编码，历史文件不重压缩；snappy 偏重速度，zstd 通常更省空间，gzip 通常更耗 CPU，uncompressed 不压缩。新旧编码混存属预期，实际压缩效果依数据而定。
-- MQ 实例保存即热更新（设置键 `system:mq` 全量替换，按实例指纹差异启停消费者）；`Enabled=false` 或缺连接串不建任何连接。旧 `system:kafka/rabbitmq/pulsar` 三键在未保存过 `system:mq` 时仍兼容生效（内存合成单实例），首次页面保存即迁移；应急回退文件默认可 `DELETE FROM setting WHERE Key='system:mq'` 后重启（慎用）。
+- MQ 实例保存即热更新（设置键 `system:mq` 全量替换，按实例指纹差异启停消费者）；`Enabled=false` 或缺连接串不建任何连接。旧 `system:kafka/rabbitmq/pulsar` 三键在未保存过 `system:mq` 时仍兼容生效（内存合成单实例），首次页面保存即迁移；应急可 `DELETE FROM setting WHERE Key='system:mq'` 后重启，删除后需在页面重新配置（慎用）。
 - 消费实例的「重试与失败通知」可设置初始/封顶间隔、选择系统已启用渠道及冷却窗口；告警默认关闭。启用后真实故障会自动发通知，保存不会试发。停用渠道在发送前再次拦截；队列级限流与投递边界见 [Ingest运维](../ingest/sop.md)。
 - 日志消费默认 Status，按实例/配置主题汇总状态与速度，不展开物理队列；Kafka/RabbitMQ/Pulsar 保留配置详情。数字为实例总数（含停用），不是在线数量；当前类型新建会预选该类型。
 - 队列名称后可直接核对匹配方式、解析格式、默认服务/级别与有效映射；长参数悬停查看完整值。编辑侧栏按区块填写，展开「规则参数」「测试解析」配置与预览；取消不会保存草稿。验收需覆盖亮暗主题、窄屏及长队列名。
 - MQ 支持精确名/名称前缀，精确优先后取最长前缀；RabbitMQ 前缀按队列名发现（需 AdminUrl/AdminUsername/AdminPassword），Pulsar 按 Namespace 内完整主题名发现。Kafka SASL 参数按 broker 设置，禁止关闭认证绕过连接错误。
 - MQ 密码显示 `********`，原样保存保留已有密码，空值表示清除。消费运行态/落库计数来自 Monitor，计数重启归零，不把 Enabled 当连接成功。真实部署与停启见 [MqProducer](../../tool/MqProducer/README.md)。
 - 通知渠道：管理员进入 `/settings?tab=notifications`；选择类型卡片的「新建实例」，填写名称及凭据保存；每种类型均可反复新建，同类型内实例名称不能重复，配置及启停状态独立。已建实例在对应类型内按紧凑列表逐条展示名称、状态和操作，可编辑、启停或删除；创建/更新信息在编辑抽屉查看；不再显示独立渠道表格和顶部刷新工具栏。保存不发送；「测试发送」确认后向目标发送真实消息，草稿不落库；停用/删除后统一发送接口拒发。编辑凭据显式选择保留、替换或清除，必填凭据不能清空保存。
-- 自建 Bark/Gotify/PushDeer/Matrix 和 Custom JSON Webhook 需配置 `SData:NotificationAllowedOrigins`，例如 `["https://gotify.example:443", "http://notify.internal:8080"]`，完整 origin 精确匹配，修改后重启。明确放行的内网可用；本机/链路本地/元数据地址始终拒绝。公共渠道需官方 HTTPS，TLS 证书必须有效。
+- 自建 Bark/Gotify/PushDeer/Matrix 和 Custom JSON Webhook 需在 `appsettings.json` 的 `SData:NotificationAllowedOrigins` 列表中配置（或 `configs/appsettings.json` 覆盖），例如 `["https://gotify.example:443", "http://notify.internal:8080"]`，完整 origin 精确匹配，修改后重启。明确放行的内网可用；本机/链路本地/元数据地址始终拒绝。公共渠道需官方 HTTPS，TLS 证书必须有效。
 - 通知配置与 SQLite 同目录的 `notification-keys/` 必须共同备份及挂载持久卷，并以操作系统权限保护。密钥环可能未加密，禁止发布/提交；遗失后无法恢复原凭据，需重新配置。跨主机恢复前验证密钥环可解密，勿只复制数据库。
 - 发送失败检查服务配额、凭据、飞书/钉钉签名或关键词限制、DNS、白名单及证书；日志不包含远端响应或秘密，不要为排错打开带 URL 的 HTTP 请求日志。测试成功代表服务接受请求，不承诺客户端已收到。
 - 首期仅文本；Matrix 不支持加密房间，Server Chan 使用 SCT SendKey 服务；告警规则、发送历史与持久重试见 [Alerts](../alerts/sop.md)。外部验收需另行授权真实目标，自动测试仅使用假传输。
-- 设置页不再展示摄取缓冲页签，旧 `?tab=ingest` 链接回落到成员；运行状态在 Overview 查看。摄取缓冲参数（容量/批量/刷新间隔）启动时绑定，调整仍走 `configs/system.yaml` + 重启。
+- 设置页不再展示摄取缓冲页签，旧 `?tab=ingest` 链接回落到成员；运行状态在 Overview 查看。摄取缓冲参数（容量/批量/刷新间隔）启动时绑定，调整 `appsettings.json` 的 `SData:Ingest` 节（或 `configs/appsettings.json` 覆盖）后重启。
 
 - MQTT接入认证由设备页管理员入口管理，GET/POST /api/settings/mqtt-auth，复用system:mqtt-auth与缓存刷新。只存哈希与长度，响应不含材料。新连接生效，旧连接需重连；与MQ日志消费、HTTP摄取key无关。损坏或无法加载配置拒绝连接；默认无覆盖时免key。

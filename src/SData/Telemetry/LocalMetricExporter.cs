@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
+using System.Text;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using SData.Infra;
@@ -12,6 +14,8 @@ namespace SData;
 /// </summary>
 public sealed class LocalMetricExporter(IIngestBuffer buffer) : BaseExporter<Metric>
 {
+    private readonly ConcurrentDictionary<string, string> _labelsJsonCache = new(StringComparer.Ordinal);
+
     /// <inheritdoc/>
     public override ExportResult Export(in Batch<Metric> batch)
     {
@@ -20,16 +24,30 @@ public sealed class LocalMetricExporter(IIngestBuffer buffer) : BaseExporter<Met
         {
             foreach (ref readonly var point in metric.GetMetricPoints())
             {
-                var labels = new Dictionary<string, object?>();
+                var tags = new List<(string Key, object? Value)>();
                 foreach (var tag in point.Tags)
                 {
-                    labels[tag.Key] = tag.Value;
+                    tags.Add((tag.Key, tag.Value));
                 }
+                var tagsKeyBuilder = new StringBuilder(tags.Count * 16);
+                foreach (var tag in tags)
+                {
+                    tagsKeyBuilder.Append(tag.Key).Append('=').Append(tag.Value).Append(';');
+                }
+                var tagsKey = tagsKeyBuilder.ToString();
+                var labelsJson = _labelsJsonCache.GetOrAdd(tagsKey, _ =>
+                {
+                    var labels = new Dictionary<string, object?>();
+                    foreach (var tag in tags)
+                    {
+                        labels[tag.Key] = tag.Value;
+                    }
 
-                labels["service"] = AppConst.ServiceName;
-                labels["service.name"] = AppConst.ServiceName;
-                labels["service.instance.id"] = Environment.MachineName;
-                var labelsJson = JsonSerializer.Serialize(labels);
+                    labels["service"] = AppConst.ServiceName;
+                    labels["service.name"] = AppConst.ServiceName;
+                    labels["service.instance.id"] = Environment.MachineName;
+                    return JsonSerializer.Serialize(labels);
+                });
                 if (metric.MetricType.IsHistogram())
                 {
                     Enqueue(metric.Name + ".count", point.GetHistogramCount(), "histogram", point.EndTime, labelsJson);

@@ -71,7 +71,7 @@ public class ApiAgentTests
     public async Task Tools_UseBoundParameters_AllowlistAndBudgets()
     {
         var executor = new RecordingExecutor();
-        var queries = new AgentQueries(executor, NullLogger<AgentQueries>.Instance);
+        var queries = new AgentQueries(executor, NullLogger<AgentQueries>.Instance, SystemSettingsProvider.FileOnly(new SData.Infra.Configuration.SystemOptions()));
         const string hostile = "'; DROP TABLE user;--";
         var response = await queries.ExecuteAsync("search_logs", new() { Service = hostile }, default);
         Assert.DoesNotContain(hostile, executor.Sql);

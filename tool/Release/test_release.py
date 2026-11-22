@@ -1,13 +1,17 @@
 """Local release-tool regression tests (stdlib only)."""
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
-import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 TOOLS = Path(__file__).resolve().parent
+REPO = TOOLS.parents[1]
 
 
 def module(name):
@@ -21,6 +25,23 @@ package = module("package")
 smoke = module("smoke")
 
 
+def run_package(root):
+    publish, ui, output = root / "publish", root / "ui", root / "output"
+    (publish / "wwwroot/assets").mkdir(parents=True)
+    (publish / "wwwroot/assets/index-stale.js").write_text("stale")
+    (publish / "SData.exe").write_bytes(b"apphost")
+    (publish / "appsettings.json").write_text('{"Serilog": {}}', encoding="utf-8")
+    (ui / "rum").mkdir(parents=True)
+    (ui / "index.html").write_text("<html></html>")
+    (ui / "rum/probe.js").write_text("probe")
+    output.mkdir()
+    argv = ["package.py", "--rid", "win-x64", "--version", "0.0.0-test",
+            "--publish", str(publish), "--ui", str(ui), "--output", str(output)]
+    with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+        package.main()
+    return output / "sdata-0.0.0-test-win-x64"
+
+
 class ReleaseTests(unittest.TestCase):
     def test_private_files_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -31,14 +52,44 @@ class ReleaseTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("{}")
             package.validate_tree(folder)
-            for name in ["configs/rsa_private.key", "data/sdata.db", "server.log",
-                         ".env.production", "configs/system.json", "appsettings.Development.json"]:
+            for name in ["configs/rsa_private.key", "configs/system.json", "data/sdata.db", "server.log",
+                         ".env.production", "appsettings.Development.json"]:
                 path = folder / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("private")
                 with self.assertRaises(ValueError, msg=name):
                     package.validate_tree(folder)
                 path.unlink()
+
+    def test_stale_publish_web_root_is_replaced_by_release_ui(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage = run_package(Path(directory).resolve())
+            self.assertFalse((stage / "wwwroot/assets/index-stale.js").exists())
+            self.assertTrue((stage / "wwwroot/index.html").is_file())
+            self.assertTrue((stage / "wwwroot/rum/probe.js").is_file())
+
+    def test_package_ships_no_configs_or_launchers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage = run_package(Path(directory).resolve())
+            self.assertFalse((stage / "configs").exists())
+            self.assertFalse((stage / "start.ps1").exists())
+            self.assertFalse((stage / "start.sh").exists())
+            self.assertEqual((stage / "appsettings.json").read_text(encoding="utf-8"), '{"Serilog": {}}')
+            self.assertTrue((stage / "README.txt").is_file())
+            self.assertTrue((stage / "SData.exe").is_file())
+
+    def test_shipped_appsettings_has_no_ui_managed_settings(self):
+        # 有页面入口的设置只存数据库；配置文件只含控制台日志与无页面入口的参数（默认值）
+        config = json.loads((REPO / "src/SData/appsettings.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(config), {"Serilog", "SData"})
+        self.assertEqual([sink["Name"] for sink in config["Serilog"]["WriteTo"]], ["Console"])
+        ui_managed = {"S3", "Retention", "Compression", "OTLP", "Mq", "Kafka", "RabbitMq", "Pulsar", "EsBulk", "Mqtt"}
+        self.assertFalse(ui_managed & set(config["SData"]))
+        self.assertEqual(config["SData"]["Port"], 5300)
+        self.assertEqual(config["SData"]["Ingest"]["InitialApiKey"], "")
+        # 初始管理员密码与令牌有效期只在配置文件中提供，代码里没有默认值
+        self.assertTrue(config["SData"]["Auth"]["InitialAdminPassword"])
+        self.assertGreater(config["SData"]["Auth"]["TokenExpireMinutes"], 0)
 
     def test_archive_traversal_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -62,33 +113,6 @@ class ReleaseTests(unittest.TestCase):
             target.mkdir()
             smoke.extract_archive(archive, target)
             self.assertEqual((target / "sdata/test.txt").read_text(), "ok")
-
-    def test_shell_launcher_preserves_config_and_escapes_password(self):
-        with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory)
-            (home / "configs").mkdir()
-            (home / "start.sh").write_text((TOOLS / "start.sh").read_text(), newline="\n")
-            template = {"SData": {"Auth": {"InitialAdminPassword": ""}}}
-            (home / "configs/system.example.json").write_text(json.dumps(template, indent=2))
-            # Fake apphost: test startup configuration without running a server.
-            (home / "SData").write_text("#!/usr/bin/env bash\nexit 0\n", newline="\n")
-            (home / "SData").chmod(0o755)
-            import os
-            import secrets
-            password = secrets.token_urlsafe(24) + '"\\\t'
-            env = dict(os.environ, SDATA_INITIAL_ADMIN_PASSWORD=password)
-            env.pop("SDATA_FILE", None)
-            result = subprocess.run(["bash", "./start.sh"], cwd=home, env=env,
-                                    shell=False, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            config_path = home / "configs/system.json"
-            before = config_path.read_bytes()
-            config = json.loads(before)
-            self.assertEqual(config["SData"]["Auth"]["InitialAdminPassword"], password)
-            result = subprocess.run(["bash", "./start.sh"], cwd=home, env=env,
-                                    shell=False, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(config_path.read_bytes(), before)
 
 
 if __name__ == "__main__":

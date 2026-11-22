@@ -44,7 +44,7 @@ namespace SData.Store.Tests;
         _connectionManager.InitializeAsync().GetAwaiter().GetResult();
 
         _buffer = new IngestBuffer(_systemOptions);
-        _writer = new IngestWriterService(_buffer, _connectionManager, _systemOptions, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+        _writer = new IngestWriterService(_buffer, _connectionManager, SystemSettingsProvider.FileOnly(_systemOptions), new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
 
         // 统一查询管线依赖（内存台账镜像：本测试无台账行，冷层恒空，行为与旧版一致）
         var sqlitePath = Path.Combine(_tempDirectory, "ledger.db");
@@ -54,7 +54,7 @@ namespace SData.Store.Tests;
         var scopeFactory = new SingleScopeFactory(ledger);
         var settings = new SystemSettingsProvider(_systemOptions, scopeFactory, new DefaultIdProvider(1), NullLogger<SystemSettingsProvider>.Instance);
         var objectStore = new CompositeObjectStore(new LocalObjectStore(), new S3ObjectStore(_systemOptions, NullLogger<S3ObjectStore>.Instance));
-        var coldCache = new ColdCacheService(_systemOptions, objectStore, NullLogger<ColdCacheService>.Instance);
+        var coldCache = new ColdCacheService(settings, objectStore, NullLogger<ColdCacheService>.Instance);
         var ledgerCache = new ColdLedgerCache(scopeFactory, NullLogger<ColdLedgerCache>.Instance);
         _logStore = new LogStore(_connectionManager, _systemOptions, new TableResolver(_connectionManager, _systemOptions, settings, ledgerCache, coldCache, NullLogger<TableResolver>.Instance));
     }

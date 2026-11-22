@@ -120,11 +120,36 @@ public class QueryOverviewCommandHandlerTests
         Assert.Empty(response.MqConsumers);
     }
 
+    [Fact]
+    public async Task Handle_CachesTodayRowCountsForTtl()
+    {
+        var today = DateTimeOffset.UtcNow;
+        var storeInfo = new StubStoreInfo(new Dictionary<string, IReadOnlyList<string>>
+        {
+            [TimeTables.LogsPrefix] = [TimeTables.Name(TimeTables.LogsPrefix, today)],
+        });
+        storeInfo.Counts[TimeTables.Name(TimeTables.LogsPrefix, today)] = 42;
+        var handler = new QueryOverviewCommandHandler(
+            new StubBuffer(),
+            storeInfo,
+            new SystemOptions(),
+            new StubSettings(),
+            new StubMetrics(),
+            new StubDuckDb());
+
+        await handler.Handle(new QueryOverviewCommand(), CancellationToken.None);
+        await handler.Handle(new QueryOverviewCommand(), CancellationToken.None);
+
+        Assert.Equal(1, storeInfo.CountTablesCalls);
+        Assert.Equal(42, storeInfo.Counts[TimeTables.Name(TimeTables.LogsPrefix, today)]);
+    }
+
     private sealed class StubSettings : ISystemSettingsProvider
     {
         public S3Options S3 { get; set; } = new();
         public List<MqInstanceOptions> Instances { get; set; } = new();
         public DuckDbSettings GetDuckDb() => new();
+        public RuntimeSettings GetRuntime() => new();
         public S3Options GetS3() => S3;
         public List<MqInstanceOptions> GetMqInstances() => Instances;
         public RetentionPlanOptions GetRetention() => new();
@@ -138,6 +163,8 @@ public class QueryOverviewCommandHandlerTests
         public string MemoryLimit => "2GB";
         public string EffectiveMemoryLimit => "1.8 GiB";
         public Task ApplyMemoryLimitAsync(string memoryLimit, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task ApplyThreadsAsync(int threads, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public void ApplyMaxConcurrentQueries(int maxConcurrentQueries) => throw new NotSupportedException();
     }
 
     private sealed class StubMetrics : IStorageMetrics
@@ -175,6 +202,7 @@ public class QueryOverviewCommandHandlerTests
     private sealed class StubStoreInfo(Dictionary<string, IReadOnlyList<string>> tables) : IStoreInfo
     {
         public Dictionary<string, long> Counts { get; } = new();
+        public int CountTablesCalls { get; private set; }
 
         public Task<long> CountTableAsync(string tableName, CancellationToken cancellationToken = default)
         {
@@ -183,6 +211,7 @@ public class QueryOverviewCommandHandlerTests
 
         public Task<IReadOnlyDictionary<string, long>> CountTablesAsync(IReadOnlyList<(string Name, string TableName)> tables, CancellationToken cancellationToken = default)
         {
+            CountTablesCalls++;
             var result = new Dictionary<string, long>(StringComparer.Ordinal);
             foreach (var (name, table) in tables)
             {

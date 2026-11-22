@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import secrets
 import shutil
 import socket
 import subprocess
@@ -75,26 +74,29 @@ def main():
         folders = list(target.iterdir())
         assert len(folders) == 1 and folders[0].is_dir()
         home = folders[0]
-        assert not (home / "configs/system.json").exists()
-        config_path = home / "configs/system.example.json"
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        assert config["SData"]["Auth"]["InitialAdminPassword"] == ""
-        password = secrets.token_urlsafe(32)
+        # 包内没有 configs 目录与启动脚本；appsettings.json 只含控制台日志与无页面入口的参数
+        assert not (home / "configs").exists()
+        assert not list(home.glob("start.*"))
+        settings_path = home / "appsettings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert set(settings) == {"Serilog", "SData"} and "Port" in settings["SData"], settings
+        # 初始管理员密码只来自 appsettings.json：程序中没有内置默认值
+        password = settings["SData"]["Auth"]["InitialAdminPassword"]
+        assert password, "appsettings.json must provide the initial admin password"
         port, mqtt = free_port(), free_port()
         while mqtt == port:
             mqtt = free_port()
-        config["SData"]["Port"] = port
-        config["SData"]["Server"] = f"http://localhost:{port}"
-        config["SData"]["Mqtt"]["Port"] = mqtt
-        config["SData"]["DuckDb"]["MemoryLimit"] = "128MB"
-        config["SData"]["DuckDb"]["Threads"] = 2
-        config_path.write_text(json.dumps(config), encoding="utf-8")
+        # 测试机上 5300 可能已被占用：改写解压副本中的 SData:Port，同时验证配置文件中的端口生效
+        settings["SData"]["Port"] = port
+        settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         env = dict(os.environ)
-        env.pop("SDATA_FILE", None)
-        env["SDATA_INITIAL_ADMIN_PASSWORD"] = password
+        env["ASPNETCORE_ENVIRONMENT"] = "Production"
         env["DOTNET_MULTILEVEL_LOOKUP"] = "0"
         env["DOTNET_ROOT"] = str(target / "no-global-runtime")
         env["ASPNETCORE_CONTENTROOT"] = str(home)
+        # 内存上限与 MQTT 端口只为测试环境覆盖，其余全部来自配置文件或内置默认值
+        env["SData__Mqtt__Port"] = str(mqtt)
+        env["SData__DuckDb__MemoryLimit"] = "128MB"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         # Local test only: address is fixed to the service spawned below, never user input.
         base = f"http://127.0.0.1:{port}"
@@ -111,15 +113,11 @@ def main():
                 return response.read()
 
         with (target / "smoke.log").open("wb") as output:
-            # Fixed launcher names from our own package; no shell command strings.
-            if os.name == "nt":
-                process = subprocess.Popen(
-                    ["powershell.exe", "-NoProfile", "-File", "./start.ps1"],
-                    shell=False, cwd=home, env=env, stdout=output, stderr=subprocess.STDOUT)
-            else:
-                process = subprocess.Popen(
-                    ["bash", "./start.sh"], shell=False, cwd=home, env=env,
-                    stdout=output, stderr=subprocess.STDOUT)
+            # Fixed executable name from our own package; no shell command strings.
+            executable = home / ("SData.exe" if os.name == "nt" else "SData")
+            process = subprocess.Popen(
+                [str(executable)], shell=False, cwd=home, env=env,
+                stdout=output, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 90
                 while True:
@@ -139,9 +137,13 @@ def main():
                     {"sql": "SELECT 42 AS answer", "rowLimit": 1}, auth["token"]))
                 assert result["rows"][0][0] == 42, result
                 assert (home / "configs/rsa_private.key").is_file()
+                # 首次启动把程序目录的 appsettings.json 复制为 configs/appsettings.json（逐字节一致，供覆盖）
+                assert (home / "configs/appsettings.json").read_bytes() == settings_path.read_bytes()
                 assert (home / "data/sdata.db").is_file()
                 assert (home / "data/sdata.duckdb").is_file()
-                print("PASS: checksum, launcher, SQLite, DuckDB, login, UI and probe")
+                # 日志只输出到控制台，运行目录内不应产生任何日志文件
+                assert not list(home.rglob("*.log"))
+                print("PASS: checksum, single config file, admin login with configured password, SQLite, DuckDB, UI and probe")
             finally:
                 if os.name == "nt":
                     subprocess.run(["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],

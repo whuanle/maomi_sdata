@@ -12,6 +12,12 @@ namespace SData;
 /// </summary>
 public sealed class LocalTraceExporter(IIngestBuffer buffer) : BaseExporter<Activity>
 {
+    private static readonly string ResourceJson = JsonSerializer.Serialize(new Dictionary<string, object>
+    {
+        ["service.name"] = AppConst.ServiceName,
+        ["service.instance.id"] = Environment.MachineName,
+    });
+
     /// <inheritdoc/>
     public override ExportResult Export(in Batch<Activity> batch)
     {
@@ -37,11 +43,7 @@ public sealed class LocalTraceExporter(IIngestBuffer buffer) : BaseExporter<Acti
                     timestamp = x.Timestamp,
                     attributes = x.Tags.ToDictionary(tag => tag.Key, tag => tag.Value),
                 })),
-                ResourceJson = JsonSerializer.Serialize(new Dictionary<string, object>
-                {
-                    ["service.name"] = AppConst.ServiceName,
-                    ["service.instance.id"] = Environment.MachineName,
-                }),
+                ResourceJson = ResourceJson,
             });
         }
 

@@ -4,6 +4,18 @@
 
 Feature: 仪表盘
 
+  @DASH-GO1 @auto:e2e
+  Scenario: Go 服务保持仪表盘配置和并发保护
+    Given 用户通过原网页保存包含分组与静态内容的仪表盘
+    When 重新读取、执行叶子组件并用过时配置保存
+    Then 配置原文和分页兼容且过时保存被拒绝
+
+  @DASH-GO2 @auto:e2e
+  Scenario: Go 服务执行真实面板计算
+    Given 面板使用绑定查询、指标、聚合或前序节点表达式
+    When 预览面板或读取整盘数据
+    Then 返回真实结果与节点诊断且单面板错误不伪装为空成功
+
   @DASH-S112 @auto:xunit
   Scenario: 整盘导出为 JSON 文件
     Given 成员查看仪表盘列表或详情

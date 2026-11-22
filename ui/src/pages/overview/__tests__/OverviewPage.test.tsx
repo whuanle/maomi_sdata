@@ -99,6 +99,17 @@ describe('OverviewPage', () => {
     expect(screen.queryByText('0')).not.toBeInTheDocument();
   });
 
+  it('后端缺少扩展字段时不崩溃', async () => {
+    vi.mocked(fetchOverview).mockResolvedValue({
+      todayRows: null,
+      tableCounts: null,
+      channels: null,
+      mqConsumers: null,
+    } as never);
+    render(<OverviewPage />);
+    await waitFor(() => expect(screen.getAllByText('未知').length).toBeGreaterThan(0));
+  });
+
   it('刷新失败保留旧数据并撤销存活标记', async () => {
     vi.useFakeTimers();
     render(<OverviewPage />);

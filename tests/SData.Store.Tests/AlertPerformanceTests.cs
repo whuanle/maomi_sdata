@@ -2,6 +2,7 @@ using System.Diagnostics;
 using global::Xunit;
 using SData.Alerts;
 using SData.Infra.Configuration;
+using SData.Settings.Services;
 using SData.Store.Models;
 
 namespace SData.Store.Tests;
@@ -17,7 +18,7 @@ public partial class AnalyticsSearchSqlTests
             new LogRecord { Timestamp = end.AddSeconds(-i % 300), Service = "api",
                 Severity = i % 10 == 0 ? "ERROR" : "INFO", Body = "sample event " + i })).ToList();
         await harness.Writer.FlushAsync(records, default);
-        var gate = new AlertExecutionGate(new SystemOptions(), TimeProvider.System);
+        var gate = new AlertExecutionGate(SystemSettingsProvider.FileOnly(new SystemOptions()), TimeProvider.System);
         async Task<(double P95, double Ingest)> Measure(bool alerts)
         {
             var latency = new List<double>();

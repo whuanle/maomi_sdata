@@ -4,9 +4,12 @@
 
 ## 配置
 
+- Go 定向验收：`go test -tags duckdb_use_lib ./cmd/sdata -run TestMonitorCountsRealDomainsAndDays`。域处理量是进程累计，表行数为持久化今日量，重启后二者不同是正常现象。Go 尚未实现的资源/MQ 采样不代表健康或零负载，见 [Go 迁移状态](../go-migration-status.md)。
+
 - 无独立配置；聚合读取 `SData:DuckDb:{Path,MemoryLimit}` 展示。
 - `/api/monitor/mq-consumption` 为管理员消费总览：实例/主题规则的启动、空闲、消费、等待持久化、禁用及异常分开显示；计数属于当前消费会话，配置重建或重启归零。历史查询同时指定 From/To（最多七天），不以历史落库量推断当前连接。
 - /health 与 /metrics 为匿名端点，容器探针/Prometheus 抓取直接使用。
+- `/metrics` 的 `sdata_gc_pause_seconds_total`、`sdata_gc_committed_bytes`、`sdata_duckdb_tracked_memory_bytes` 和 `sdata_duckdb_wal_bytes` 可用于区分 GC、DuckDB 跟踪内存与 WAL 增长；存储采样值来自 15 秒本地快照，对应采样失败或尚未完成时缺省，不代表零。`sdata_store_*_wait_seconds`、`sdata_store_source_switch_lock_hold_seconds`、`sdata_ingest_*_seconds` 和 `sdata_{rollup,archive,retention}_duration_seconds` 是自进程启动以来的直方图；源切换持锁直方图只计独占租约持有时长，不含等待时间；在 PF07 安全收窄前，它仍包含锁内 S3 对象删除时间，不能单独据此推断删除已移出锁。`sdata_rollup_rows_total` / `sdata_archive_rows_total` 是成功处理的记录行数，保留计数器分别统计删除的表、过期冷档台账行与 rollup 汇总行。
 
 - Status 刷新失败会显示请求/JSON/契约/超时类别、可用 HTTP 状态码与时间，可手动重试。消费阶段展开最近失败查看原因、恢复时间及阻塞数量；共享 writer 失败单独提示，未恢复为红色告警，恢复后整块提示自动隐藏，不再展示历史原因和恢复时间，勿将其误判为 broker 断连。内存不足/数据库失效处置见 [Store 运维](../store/sop.md)。等待超过 30 秒是排查提示，不等于已失败。
 
@@ -16,16 +19,18 @@
 
 | 现象 | 处置 |
 |---|---|
-| 总览页通道全部"有丢弃" | 接入缓冲满（写入速率 > 落库吞吐）：检查 DuckDB 写入耗时与 `Ingest:Buffer` 容量配置 |
+| 总览页通道全部"有丢弃" | 接入缓冲满（写入速率 > 落库吞吐）：检查 writer 日志、`Ingest:Buffer` 容量配置及 `/metrics` 的 `sdata_ingest_append_seconds`、`sdata_ingest_commit_seconds` 直方图 |
 | 存储卡片热层字节数 0 | 数据库文件未创建（首次启动前）或路径配置变化；核对 `SData:DuckDb:Path` 与数据目录挂载 |
 | /api/overview/status 401 | 需登录态（Bearer token），总览页经统一 api client 携带 |
+| 今日行数刷新滞后最多 5 秒 | PF13 总览只缓存当日批量 count；通道、存储、MQ 摘要实时，跨 UTC 日期自动换键 |
 
 ## 验收流程
 
 1. `dotnet test tests/SData.Monitor.Tests`（聚合、安全摘要、系统资源与容器采样；当前 20 例，非 macOS 跳过 1 例原生烟测）。
-2. `cd ui && npm run test`（Overview 与资源面板共 8 例；全量结果见 tdd）。
-3. 启动宿主后登录访问 `/overview`，核对系统信息、七域统计、存储与 MQ 摘要；确认无 Recent logs，窄屏无页面横向溢出，亮暗主题均可读。
-4. S3 后台每 10 分钟只读列举当前桶/前缀对象，30 秒预算，失败后一分钟重试；无 ListBucket 权限不等于归档不可用。总量不包含历史版本，也不是服务端剩余容量，不执行写对象测试。MQ 最近状态不是实时连接探针；禁用/无快照分别显示，累计落库数重启归零。
-5. 刷新失败时核对失败来源及快照更新时间；无数据时显示未知，不以零值或存活标记掩盖失败。
-6. 日志消费的 Status 与协议详情按配置队列/主题规则显示各自状态、速率和错误；前缀规则仍汇总匹配数量。核对同实例多名称状态不串行，禁用/未知/刷新失败速率为 `—`；`37.733333… B/s` 显示 `37.7 B/s`，极小正值显示 `<0.1 B/s` 而非零。有解析/确认失败或最近失败记录时，状态与失败提示应直接显示红色；健康消费保持绿色。此展示不改变 broker 重连和故障隔离机制。
-7. macOS 使用 libSystem/Mach，不依赖 shell。可用内存为 free + inactive 页估计，与活动监视器不保证一致；在 Intel/Apple Silicon 上运行监控测试并等待两轮 CPU 采样，核对非空、范围合理及持续采样无端口引用泄漏。当前 Windows 环境不能替代此实机验收。
+2. 宿主运行时 GET `/metrics`，确认 HTTP 200、`text/plain`；各 histogram 应含 `+Inf` 桶且其值等于 `_count`，桶计数单调不减。存储采样指标允许在首次有效采样前缺省。
+3. `cd ui && npm run test`（Overview 与资源面板共 8 例；全量结果见 tdd）。
+4. 启动宿主后登录访问 `/overview`，核对系统信息、七域统计、存储与 MQ 摘要；确认无 Recent logs，窄屏无页面横向溢出，亮暗主题均可读。
+5. S3 后台每 10 分钟只读列举当前桶/前缀对象，30 秒预算，失败后一分钟重试；无 ListBucket 权限不等于归档不可用。总量不包含历史版本，也不是服务端剩余容量，不执行写对象测试。MQ 最近状态不是实时连接探针；禁用/无快照分别显示，累计落库数重启归零。
+6. 刷新失败时核对失败来源及快照更新时间；无数据时显示未知，不以零值或存活标记掩盖失败。
+7. 日志消费的 Status 与协议详情按配置队列/主题规则显示各自状态、速率和错误；前缀规则仍汇总匹配数量。核对同实例多名称状态不串行，禁用/未知/刷新失败速率为 `—`；`37.733333… B/s` 显示 `37.7 B/s`，极小正值显示 `<0.1 B/s` 而非零。有解析/确认失败或最近失败记录时，状态与失败提示应直接显示红色；健康消费保持绿色。此展示不改变 broker 重连和故障隔离机制。
+8. macOS 使用 libSystem/Mach，不依赖 shell。可用内存为 free + inactive 页估计，与活动监视器不保证一致；在 Intel/Apple Silicon 上运行监控测试并等待两轮 CPU 采样，核对非空、范围合理及持续采样无端口引用泄漏。当前 Windows 环境不能替代此实机验收。

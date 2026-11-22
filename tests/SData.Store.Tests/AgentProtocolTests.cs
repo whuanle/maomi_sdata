@@ -12,6 +12,7 @@ using SData.Agents;
 using SData.Database;
 using SData.Database.Entities;
 using SData.Infra.Services;
+using SData.Settings.Services;
 using Xunit;
 
 namespace SData.Store.Tests;
@@ -56,8 +57,9 @@ public class AgentProtocolTests
             client.DefaultRequestHeaders.Add("Origin", "https://untrusted.example");
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/mcp", initialize)).StatusCode);
             client.DefaultRequestHeaders.Remove("Origin");
-            client.DefaultRequestHeaders.Host = "untrusted.example";
-            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/mcp", initialize)).StatusCode);
+            // 服务监听所有网卡，MCP 不做 Host 白名单；鉴权由 Agent Key 与同源 Origin 负责
+            client.DefaultRequestHeaders.Host = "any.example";
+            Assert.True((await client.PostAsJsonAsync("/api/mcp", initialize)).IsSuccessStatusCode);
             client.DefaultRequestHeaders.Host = null;
             var initialized = await client.PostAsJsonAsync("/api/mcp", initialize);
             Assert.True(initialized.IsSuccessStatusCode, await initialized.Content.ReadAsStringAsync());
@@ -114,7 +116,7 @@ public class AgentProtocolTests
             }
             var options = new SData.Infra.Configuration.SystemOptions();
             options.Agents.PerKeyConcurrency = 1;
-            var budget = new AgentRequestBudget(options);
+            var budget = new AgentRequestBudget(SystemSettingsProvider.FileOnly(options));
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var firstScope = provider.CreateScope();
@@ -131,7 +133,7 @@ public class AgentProtocolTests
             finally { release.SetResult(); await running; }
 
             options.Agents.RequestsPerMinute = 1;
-            budget = new AgentRequestBudget(options);
+            budget = new AgentRequestBudget(SystemSettingsProvider.FileOnly(options));
             using var thirdScope = provider.CreateScope();
             await budget.InvokeAsync(Context(thirdScope.ServiceProvider, key), _ => Task.CompletedTask);
             using var fourthScope = provider.CreateScope();

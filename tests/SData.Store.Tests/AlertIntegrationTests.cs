@@ -9,6 +9,7 @@ using SData.Infra.Configuration;
 using SData.Infra.Exceptions;
 using SData.Infra.Services;
 using SData.Settings;
+using SData.Settings.Services;
 using SData.Store.Models;
 
 namespace SData.Store.Tests;
@@ -102,7 +103,7 @@ public class AlertIntegrationTests
     public async Task Gate_SharesSingleSlotWithPreview_AndReleasesAfterCancellation()
     {
         var options = new SystemOptions { Alerts = new() { QueryTimeoutSeconds = 1 } };
-        var gate = new AlertExecutionGate(options, TimeProvider.System);
+        var gate = new AlertExecutionGate(SystemSettingsProvider.FileOnly(options), TimeProvider.System);
         var executor = new FakeExecutor { Block = true };
         var query = new AlertCountQuery("logs", "", new Dictionary<string, object?>(), DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow, 2);
         var first = gate.ExecuteAsync(executor, query, default);
@@ -118,7 +119,7 @@ public class AlertIntegrationTests
     public async Task QueueFull_IsBoundedAndVisible()
     {
         using var harness = new Harness();
-        harness.Options.Alerts.MaxPendingDeliveries = 1;
+        await harness.SetAlertsAsync(alerts => alerts.MaxPendingDeliveries = 1);
         await harness.SaveAsync();
         harness.Executor.Count = 2;
         harness.Clock.Advance(300);
@@ -201,29 +202,39 @@ public class AlertIntegrationTests
         public readonly FakeExecutor Executor = new();
         public readonly Sender Sender = new();
         public readonly SystemOptions Options = new();
+        public readonly SystemSettingsProvider Settings;
         public readonly AlertExecutionGate Gate;
         public readonly AlertScheduler Scheduler;
         public readonly AlertDeliveryWorker Worker;
 
         public Harness()
         {
-            Gate = new(Options, Clock);
             Services = new ServiceCollection()
                 .AddDbContext<DatabaseContext>(builder => builder.UseSqlite("Data Source=" + _path))
                 .AddSingleton<IIdProvider>(new DefaultIdProvider(1))
                 .AddSingleton<IAnalyticsExecutor>(Executor)
                 .AddSingleton<INotificationSender>(Sender).BuildServiceProvider();
+            Settings = new SystemSettingsProvider(Options, Services.GetRequiredService<IServiceScopeFactory>(), new DefaultIdProvider(1), NullLogger<SystemSettingsProvider>.Instance);
+            Gate = new(Settings, Clock);
             using var scope = Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
             db.Database.EnsureCreated();
             db.NotificationChannels.Add(new NotificationChannelEntity { Id = 1, Name = "test", Type = "webhook", Enabled = true, ProtectedConfig = "secret" });
             db.SaveChanges();
-            Scheduler = new(Services.GetRequiredService<IServiceScopeFactory>(), Gate, Options, Clock, NullLogger<AlertScheduler>.Instance);
-            Worker = new(Services.GetRequiredService<IServiceScopeFactory>(), Clock, Options, NullLogger<AlertDeliveryWorker>.Instance);
+            Scheduler = new(Services.GetRequiredService<IServiceScopeFactory>(), Gate, Settings, Clock, NullLogger<AlertScheduler>.Instance);
+            Worker = new(Services.GetRequiredService<IServiceScopeFactory>(), Clock, Settings, NullLogger<AlertDeliveryWorker>.Instance);
         }
 
         public AlertHandlers Handlers(IServiceScope scope) => new(scope.ServiceProvider.GetRequiredService<DatabaseContext>(),
-            Services.GetRequiredService<IIdProvider>(), Options, Gate, Executor, Clock);
+            Services.GetRequiredService<IIdProvider>(), Settings, Gate, Executor, Clock);
+
+        /// <summary>在当前生效的运行参数上修改告警段，经设置提供器保存（验证热读，不直接改文件配置）.</summary>
+        public Task SetAlertsAsync(Action<AlertOptions> change)
+        {
+            var runtime = System.Text.Json.JsonSerializer.Deserialize<RuntimeSettings>(System.Text.Json.JsonSerializer.Serialize(Settings.GetRuntime()))!;
+            change(runtime.Alerts);
+            return Settings.SaveAsync(SettingKeys.Runtime, System.Text.Json.JsonSerializer.Serialize(runtime, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)), default);
+        }
 
         public async Task<AlertItem> SaveAsync(string? id = null, long version = 0, bool enabled = true)
         {

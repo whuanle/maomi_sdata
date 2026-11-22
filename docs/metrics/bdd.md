@@ -4,6 +4,12 @@
 
 Feature: 指标查询
 
+  @METRICS-GO1 @auto:e2e
+  Scenario: Go 兼容查询返回真实指标而非固定空结果
+    Given 登录用户已摄取两个时间点的计数器样本
+    When 执行选择器、标签聚合、窗口速率和仪表盘预览
+    Then 返回原协议序列与正确数值且面板保留毫秒时间精度
+
   @METRICS-SEARCH1 @auto:xunit
   Scenario: 统一查询 DSL 分桶聚合（POST /api/metrics/search）
     When 提交 range + bucket.step=1h avg(value) 与 labels.host 标签过滤

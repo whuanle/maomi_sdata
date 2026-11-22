@@ -45,6 +45,7 @@ public class ApiKeySchemaTests
         services.AddDbContext<DatabaseContext>(o => o.UseSqlite("Data Source=" + file));
         await using var provider = services.BuildServiceProvider();
         var options = new SystemOptions { Database = { Path = file } };
+        options.Auth.InitialAdminPassword = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
         options.Ingest.InitialApiKey = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
         var initializer = new DatabaseInitializer(provider.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<DatabaseInitializer>.Instance, options, new Pbkdf2PasswordHasher());

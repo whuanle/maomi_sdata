@@ -5,7 +5,7 @@
 #      主端口（HTTP/1+2，明文 h2c 需 SData:Listeners 加 grpc 标记端口，见第 3 步）
 #   2. 接入鉴权：SData:Ingest:InitialApiKey（或已创建的接入 Key）
 #      兼容 X-Api-Key 头 / Authorization: Bearer / Basic(password=Key)
-#   3. gRPC 直连建议：configs/system.yaml 加
+#   3. gRPC 直连建议（appsettings.json 的 SData:Listeners）：
 #        SData:Listeners: [ { Port: 4317, Protocol: grpc } ]   # grpc=纯 HTTP/2（T112 已实现）
 #      HTTP 通道可用 4318：{ Port: 4318, Protocol: http }
 # ============================================

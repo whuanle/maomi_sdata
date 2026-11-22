@@ -3,6 +3,7 @@ using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Infra.Services;
 using SData.Store.Core;
+using SData.Settings.Services;
 using SData.Store.Models;
 using Xunit;
 
@@ -25,7 +26,7 @@ public class MqPersistenceTests
         var buffer = new IngestBuffer(options);
         await using var manager = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
         await manager.InitializeAsync();
-        using var writer = new IngestWriterService(buffer, manager, options, new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+        using var writer = new IngestWriterService(buffer, manager, SystemSettingsProvider.FileOnly(options), new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
         var now = DateTimeOffset.UtcNow;
         var receipt = buffer.PersistLogsAsync(new[] { new LogRecord { Timestamp = now, Body = "receipt", Source = "kafka:test" } }, CancellationToken.None);
         Assert.False(receipt.IsCompleted);
@@ -33,6 +34,34 @@ public class MqPersistenceTests
         await receipt.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(1, await manager.CountAsync(TimeTables.Name(TimeTables.LogsPrefix, now)));
         await writer.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task PersistLogsAsync_UsesOneReceiptForTheBatch()
+    {
+        var options = new SystemOptions();
+        var buffer = new IngestBuffer(options);
+        var records = new[]
+        {
+            new LogRecord { Body = "first" },
+            new LogRecord { Body = "second" },
+            new LogRecord { Body = "last" },
+        };
+
+        var pending = buffer.PersistLogsAsync(records, CancellationToken.None);
+        Assert.True(buffer.HasPersistWaiters);
+        var items = new List<IngestItem>();
+        while (buffer.Reader.TryRead(out var item))
+        {
+            items.Add(item);
+        }
+
+        Assert.Equal(records.Length, items.Count);
+        Assert.All(items.Take(items.Count - 1), item => Assert.Null(item.Persisted));
+        Assert.NotNull(items[^1].Persisted);
+        items[^1].Persisted!.TrySetResult();
+        await pending;
+        Assert.False(buffer.HasPersistWaiters);
     }
 
     [Fact]
@@ -47,7 +76,7 @@ public class MqPersistenceTests
         var buffer = new IngestBuffer(options);
         await using var manager = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
         await manager.InitializeAsync();
-        using var writer = new IngestWriterService(buffer, manager, options, new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+        using var writer = new IngestWriterService(buffer, manager, SystemSettingsProvider.FileOnly(options), new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
         var today = new DateTimeOffset(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero);
         await manager.EnsureDayTablesAsync(TimeTables.MqConsumptionPrefix, [today.AddDays(-1)]);
         var legacyTable = TimeTables.Name(TimeTables.MqConsumptionPrefix, today.AddDays(-1));
@@ -99,7 +128,7 @@ public class MqPersistenceTests
         await using var manager = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
         await manager.InitializeAsync();
         var ids = new FailOnceIdProvider();
-        using var writer = new IngestWriterService(buffer, manager, options, ids, NullLogger<IngestWriterService>.Instance);
+        using var writer = new IngestWriterService(buffer, manager, SystemSettingsProvider.FileOnly(options), ids, NullLogger<IngestWriterService>.Instance);
         var now = DateTimeOffset.UtcNow;
         var logs = new[] { new LogRecord { Timestamp = now, Body = "first" }, new LogRecord { Timestamp = now, Body = "second" } };
         var receipt = buffer.PersistLogsAsync(logs, CancellationToken.None);
@@ -175,6 +204,39 @@ public class MqPersistenceTests
         Assert.Equal(8, accepted);
         Assert.Equal(8, buffer.Reader.Count);
         Assert.Equal(992, buffer.GetStats().Dropped["log"]);
+    }
+
+    [Fact]
+    public void BatchEnqueuePreservesAcceptedAndDroppedCounts()
+    {
+        var options = new SystemOptions();
+        options.Ingest.BufferCapacity = 3;
+        var buffer = new IngestBuffer(options);
+        var result = buffer.TryEnqueueLogs([
+            new LogRecord { Body = "1" },
+            new LogRecord { Body = "2" },
+            new LogRecord { Body = "3" },
+            new LogRecord { Body = "4" },
+        ]);
+
+        Assert.Equal(3, result.Accepted);
+        Assert.Equal(1, result.Dropped);
+        Assert.Equal(3, buffer.Reader.Count);
+        Assert.Equal(1, buffer.GetStats().Dropped["log"]);
+    }
+
+    [Fact]
+    public void ByteBudgetRejectsOversizedBatchAndTracksBufferedBytes()
+    {
+        var options = new SystemOptions();
+        options.Ingest.BufferCapacity = 100;
+        options.Ingest.BufferByteBudgetBytes = 63;
+        var buffer = new IngestBuffer(options);
+
+        Assert.False(buffer.TryEnqueueLog(new LogRecord()));
+        Assert.Equal(1, buffer.GetStats().Dropped["log"]);
+        Assert.Equal(0, buffer.GetStats().BufferedBytes);
+        Assert.Equal(63, buffer.GetStats().ByteBudgetBytes);
     }
 
     [Fact]

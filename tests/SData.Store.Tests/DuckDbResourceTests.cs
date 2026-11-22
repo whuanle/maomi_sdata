@@ -2,6 +2,7 @@ using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging.Abstractions;
 using SData.Infra.Configuration;
 using SData.Infra.Services;
+using SData.Settings.Services;
 using SData.Store.Core;
 using SData.Store.Models;
 using SData.Store.QueryDsl;
@@ -79,14 +80,98 @@ public class DuckDbResourceTests
     }
 
     [Fact]
+    public async Task MaintenanceBudget_SerializesAndCancellationReleasesPermit()
+    {
+        await using var harness = await Harness.CreateAsync();
+        using var lease = await harness.Manager.LockMaintenanceAsync(CancellationToken.None);
+        using var stop = new CancellationTokenSource();
+        var waiting = harness.Manager.LockMaintenanceAsync(stop.Token);
+        Assert.False(waiting.IsCompleted);
+
+        var now = DateTimeOffset.UtcNow;
+        await harness.Writer.FlushAsync([
+            new(IngestKind.Log, new LogRecord { Timestamp = now, Body = "maintenance gate does not block ingestion" })
+        ], CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        lease.Dispose();
+
+        using var next = await harness.Manager.LockMaintenanceAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        var histogram = harness.Manager.Snapshot.Histograms
+            .Single(item => item.Name == "sdata_store_maintenance_lock_wait_seconds");
+        Assert.True(histogram.Count > 0);
+        Assert.Equal(histogram.Count, histogram.BucketCounts[^1]);
+    }
+
+    [Fact]
+    public async Task AlertAndUserQueryUseSeparateAdmissionSlots()
+    {
+        await using var harness = await Harness.CreateAsync();
+        using var alertLease = await harness.Manager.LockAlertQueryAsync(CancellationToken.None);
+
+        using (var userLease = await harness.Manager.LockQueryAsync(CancellationToken.None)
+                   .WaitAsync(TimeSpan.FromSeconds(5)))
+        {
+            using var stop = new CancellationTokenSource();
+            var waitingAlert = harness.Manager.LockAlertQueryAsync(stop.Token);
+            Assert.False(waitingAlert.IsCompleted);
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waitingAlert);
+        }
+
+        var histogram = harness.Manager.Snapshot.Histograms
+            .Single(item => item.Name == "sdata_store_alert_query_lock_wait_seconds");
+        Assert.True(histogram.Count > 0);
+        Assert.Equal(histogram.Count, histogram.BucketCounts[^1]);
+    }
+
+    [Fact]
+    public async Task TraceIndex_ExistsOnHotTableAndRemovedOnFreeze()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var now = DateTimeOffset.UtcNow;
+        await harness.Manager.EnsureDayTablesAsync(TimeTables.TracesPrefix, [now]);
+        var table = TimeTables.Name(TimeTables.TracesPrefix, now);
+        var indexName = table + "_tid_idx";
+
+        var hotCount = await harness.Manager.QueryAsync(
+            "SELECT count(*) FROM duckdb_indexes() WHERE table_name = $table_name AND index_name = $index_name",
+            [
+                new DuckDB.NET.Data.DuckDBParameter("table_name", table),
+                new DuckDB.NET.Data.DuckDBParameter("index_name", indexName),
+            ],
+            async reader =>
+            {
+                await reader.ReadAsync();
+                return reader.GetInt64(0);
+            });
+        Assert.Equal(1, hotCount);
+
+        var snapshot = await harness.Manager.FreezeDayAsync(TimeTables.TracesPrefix, now, CancellationToken.None);
+        Assert.NotNull(snapshot);
+
+        var frozenCount = await harness.Manager.QueryAsync(
+            "SELECT count(*) FROM duckdb_indexes() WHERE table_name = $table_name",
+            [new DuckDB.NET.Data.DuckDBParameter("table_name", snapshot)],
+            async reader =>
+            {
+                await reader.ReadAsync();
+                return reader.GetInt64(0);
+            });
+        Assert.Equal(0, frozenCount);
+    }
+
+    [Fact]
     public async Task AnalyticsAndDsl_ShareQueryBudget_WithoutBlockingWriter()
     {
         await using var harness = await Harness.CreateAsync();
         var now = DateTimeOffset.UtcNow;
         await harness.Manager.EnsureDayTablesAsync(TimeTables.LogsPrefix, [now]);
         var resolver = new HotResolver(harness.Manager);
-        var analytics = new AnalyticsExecutor(harness.Manager, harness.Options, resolver, NullLogger<AnalyticsExecutor>.Instance);
-        var dsl = new QueryDslExecutorService(harness.Manager, harness.Options, resolver);
+        var analytics = new AnalyticsExecutor(harness.Manager, harness.Options, SystemSettingsProvider.FileOnly(harness.Options), resolver, NullLogger<AnalyticsExecutor>.Instance);
+        var dsl = new QueryDslExecutorService(harness.Manager, SystemSettingsProvider.FileOnly(harness.Options), resolver);
         using var lease = await harness.Manager.LockQueryAsync(CancellationToken.None);
         using var stop = new CancellationTokenSource();
         var sql = analytics.ExecuteAsync("SELECT 1", cancellationToken: stop.Token);
@@ -172,7 +257,7 @@ public class DuckDbResourceTests
     {
         await using var harness = await Harness.CreateAsync();
         await new DuckDbSchemaBootstrapper(harness.Manager, NullLogger<DuckDbSchemaBootstrapper>.Instance).ApplyAsync();
-        var analytics = new AnalyticsExecutor(harness.Manager, harness.Options, new HotResolver(harness.Manager), NullLogger<AnalyticsExecutor>.Instance);
+        var analytics = new AnalyticsExecutor(harness.Manager, harness.Options, SystemSettingsProvider.FileOnly(harness.Options), new HotResolver(harness.Manager), NullLogger<AnalyticsExecutor>.Instance);
         var rollup = new RollupService(harness.Manager, NullLogger<RollupService>.Instance);
         var time = DateTimeOffset.UtcNow.AddMinutes(-10);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -221,7 +306,7 @@ public class DuckDbResourceTests
             harness.Buffer = new IngestBuffer(harness.Options);
             harness.Manager = new DuckDbConnectionManager(harness.Options, NullLogger<DuckDbConnectionManager>.Instance);
             await harness.Manager.InitializeAsync();
-            harness.Writer = new IngestWriterService(harness.Buffer, harness.Manager, harness.Options, new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+            harness.Writer = new IngestWriterService(harness.Buffer, harness.Manager, SystemSettingsProvider.FileOnly(harness.Options), new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
             return harness;
         }
 

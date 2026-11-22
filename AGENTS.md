@@ -5,8 +5,9 @@ SData 是面向内网单机部署的高性能观测/数据分析服务：**DuckD
 ## 1. 技术栈与架构
 
 - .NET 10 模块化单体（Maomi.Core 模块框架 + MediatR CQRS + EF Core(SQLite) + DuckDB.NET）。
-- 每个业务域三个项目：`SData.{Domain}.Shared`（请求/响应模型）→ `SData.{Domain}.Core`（Handler/服务）→ `SData.{Domain}.Api`（Controller）。依赖严格单向：`Api → Shared`，`Core → Api + Shared`；跨域只能引用对方 `Shared`（或经接口）。
-- 宿主 `src/SData` 通过 `[InjectModule]` 聚合全部模块；横切配置（MVC/认证/MediatR/OTel）在 `src/SData/Modules/`。
+- **单一项目 `src/SData/SData.csproj`**（2026-11 由 47 个拆分项目合并而来，方便发布、避免多份 pdb/xml）。源码按 `{Domain}/{Layer}/` 目录组织：`{Domain}/Shared/`（请求/响应模型）、`{Domain}/Core/`（Handler/服务）、`{Domain}/Api/`（Controller）。命名空间保持拆分时期的形式（`SData.{Domain}.Shared/Core/Api`）。
+- 依赖方向仍严格单向（现为命名空间约定，不再由程序集边界强制）：`Api → Shared`，`Core → Api + Shared`；跨域只使用对方 `Shared`（或经接口）。
+- 宿主通过 `[InjectModule]` 聚合全部模块（`MainModule`）；横切配置（MVC/认证/MediatR/OTel）在 `src/SData/Modules/`。
 
 ## 2. 模型与验证
 
@@ -43,7 +44,7 @@ SData 是面向内网单机部署的高性能观测/数据分析服务：**DuckD
 ## 6. 文档与流程
 
 - 代码变更 → 同步更新 `docs/{module}/bdd.md` 场景 → 跑对应验证 → 更新 sdd/sop。文档分层与四件套规范见 `docs/DOC-STANDARD.md`。
-- 新模块脚手架：`{Domain}.Shared`（含 `{Domain}SharedModule`）+ `{Domain}.Core`（含 `[InjectModule]` 的 `{Domain}CoreModule`）+ `{Domain}.Api`（含 `{Domain}ApiModule`），加入 sln 与宿主 `MainModule`。
+- 新模块脚手架：在 `src/SData/{Domain}/` 下建 `Shared/`（含 `{Domain}SharedModule`）+ `Core/`（含 `[InjectModule]` 的 `{Domain}CoreModule`）+ `Api/`（含 `{Domain}ApiModule`），在宿主 `MainModule` 上追加 `[InjectModule<...>]`。
 
 ## 7. 工具链
 

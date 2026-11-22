@@ -1022,7 +1022,7 @@ public partial class AnalyticsSearchSqlTests(global::Xunit.Abstractions.ITestOut
 
             Manager = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
             Manager.InitializeAsync().GetAwaiter().GetResult();
-            Writer = new IngestWriterService(new IngestBuffer(options), Manager, options, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+            Writer = new IngestWriterService(new IngestBuffer(options), Manager, SystemSettingsProvider.FileOnly(options), new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
 
             var sqlitePath = Path.Combine(TempDirectory, "ledger.db");
             var dbOptions = new DbContextOptionsBuilder<DatabaseContext>().UseSqlite($"Data Source={sqlitePath}").Options;
@@ -1031,11 +1031,11 @@ public partial class AnalyticsSearchSqlTests(global::Xunit.Abstractions.ITestOut
             var scopeFactory = new SingleScopeFactory(Ledger);
             var settings = new SystemSettingsProvider(options, scopeFactory, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<SystemSettingsProvider>.Instance);
             var objectStore = new CompositeObjectStore(new LocalObjectStore(), new S3ObjectStore(options, NullLogger<S3ObjectStore>.Instance));
-            var coldCache = new ColdCacheService(options, objectStore, NullLogger<ColdCacheService>.Instance);
+            var coldCache = new ColdCacheService(settings, objectStore, NullLogger<ColdCacheService>.Instance);
             var ledgerCache = new ColdLedgerCache(scopeFactory, NullLogger<ColdLedgerCache>.Instance);
             LedgerCache = ledgerCache;
             Resolver = new TableResolver(Manager, options, settings, ledgerCache, coldCache, NullLogger<TableResolver>.Instance);
-            Executor = new AnalyticsExecutor(Manager, options, Resolver, NullLogger<AnalyticsExecutor>.Instance);
+            Executor = new AnalyticsExecutor(Manager, options, settings, Resolver, NullLogger<AnalyticsExecutor>.Instance);
         }
 
         /// <inheritdoc/>

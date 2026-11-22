@@ -4,6 +4,24 @@
 
 Feature: 服务状态与总览聚合
 
+  @MON-GO1 @auto:e2e
+  Scenario: Go 状态按真实日期和数据域统计
+    Given 日志跨越两天且指标与会话各有新记录
+    When 查询状态和总览
+    Then 天表数与今日行数来自存储且每个通道只计自身的处理量
+
+  @MON-PF13 @auto:xunit
+  Scenario: 总览今日行数短缓存
+    Given 管理员连续刷新总览
+    When 两次请求落在缓存 TTL 内
+    Then 通道、存储和 MQ 快照仍刷新今日行数结果复用并不阻塞其他状态字段
+
+  @MON-PF01 @auto:xunit
+  Scenario: 性能采样区分可用与不可用数据
+    Given 服务记录 Store 锁等待、摄取阶段和维护作业耗时及成功工作量，本地存储资源后台采样可能成功或失败
+    When 监控系统采集服务性能指标
+    Then 返回带有限定边界的累积直方图、计数器及 GC 指标，仅在存储采样可用时返回对应 DuckDB 内存与 WAL 大小
+
   @MON-S8 @auto:e2e
   Scenario: 共享持久化故障恢复后不再显示提示
     Given 共享写入器曾发生失败且后续批次已提交

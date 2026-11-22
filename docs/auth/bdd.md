@@ -11,6 +11,13 @@ Feature: 站点品牌
 
 Feature: 认证与用户
 
+  @AUTH-GO1 @auto:unit
+  Scenario: Go 认证保留无损用户标识并隔离摄取凭据
+    Given 用户标识超过 JavaScript 安全整数范围
+    When 登录身份用于审计或采集器使用 Bearer 接入密钥
+    Then 用户标识无损且摄取凭据不被误当作网页登录令牌
+    And 受保护的管理路由仍拒绝无效网页登录令牌
+
   @AUTH-S1 @manual
   Scenario: 正确密码登录获得 token
     When 以 admin 与初始密码登录

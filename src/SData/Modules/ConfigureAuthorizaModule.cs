@@ -10,7 +10,7 @@ using SData.Infra.Configuration;
 namespace SData;
 
 /// <summary>
-/// JWT 认证（RSA 签名，issuer/audience = SData:Server）.
+/// JWT 认证（RSA 签名，issuer/audience 为固定服务名 sdata）.
 /// </summary>
 public class ConfigureAuthorizaModule : IModule
 {
@@ -28,8 +28,6 @@ public class ConfigureAuthorizaModule : IModule
     /// <inheritdoc/>
     public void ConfigureServices(ServiceContext context)
     {
-        var systemOptions = _configuration.GetSection("SData").Get<SystemOptions>()
-            ?? throw new FormatException("The system configuration (SData section) cannot be loaded.");
         var rsaProvider = new RsaProvider();
 
         context.Services
@@ -39,9 +37,9 @@ public class ConfigureAuthorizaModule : IModule
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidIssuer = systemOptions.Server,
+                    ValidIssuer = AppConst.ServiceName,
                     ValidateAudience = true,
-                    ValidAudience = systemOptions.Server,
+                    ValidAudience = AppConst.ServiceName,
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKey = new RsaSecurityKey(rsaProvider.GetPrivateKey()),
                     ValidateLifetime = true,

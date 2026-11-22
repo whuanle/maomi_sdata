@@ -4,6 +4,9 @@
 
 ## Analytics 工作台
 
+- Go 实现：`go/internal/store/analytics.go` 统一有界分析通道（参数绑定、执行层 N+1、30 秒取消）；`go/internal/query/saved_queries.go` 负责元数据与快照校验。返回 `columns/rows/elapsedMs/truncated`；保存项使用 `sqlText/definition/exactId` 与 `page/pageSize/count/data`，用户审计由 HTTP 边界传入。
+- Go 天表目录一次读取，范围内表集合一次目录查询；按列名合并跨天天表，当前仅覆盖热层，冷层切换门禁见 [迁移状态](../go-migration-status.md)。Go 时间参数显式绑定为 TIMESTAMP，避免旧驱动无法推断投影参数类型。
+
 - `GET /api/analytics/tables` 经认证与 `IAnalyticsCatalog` 读取实时 DuckDB 表/字段类型/可空性，不扫描业务行，不列 SQLite 元数据。
 - 左侧目录与表结构平分标题栏下剩余高度，分别固定搜索框并独立滚动；表名/字段名大小写不敏感筛选，切表清空字段筛选。右侧 SQL/Lucene 与结果；结构/示例不覆盖草稿，字段/表名显式光标插入。CodeMirror 实际 schema 补全，物理表与逻辑占位符分离。
 - 查询栏采用紧凑双行：首行目录/来源和保存操作，次行固定宽度模式选择、可伸缩 Lucene 输入及右侧时间/行数/执行；SQL 保留独立多行编辑器，窄屏允许换行。

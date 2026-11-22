@@ -13,6 +13,7 @@ using SData.Infra.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using SData.Agents;
 using SData.Infra.Exceptions;
+using SData.Settings.Services;
 using SData.Store.Core;
 using SData.Store.Models;
 using Xunit;
@@ -85,7 +86,7 @@ public partial class StoreIntegrationTests
         Assert.Equal("TypeError", errors.Rows.Single()[0]);
         Assert.DoesNotContain("excluded", JsonSerializer.Serialize(errors));
         Assert.Equal("unknown", errors.Completeness);
-        var legacy = new AgentQueries(new AnalyticsExecutor(_connectionManager, _systemOptions, Resolver, NullLogger<AnalyticsExecutor>.Instance), NullLogger<AgentQueries>.Instance, _systemOptions, analysis);
+        var legacy = new AgentQueries(new AnalyticsExecutor(_connectionManager, _systemOptions, SystemSettingsProvider.FileOnly(_systemOptions), Resolver, NullLogger<AnalyticsExecutor>.Instance), NullLogger<AgentQueries>.Instance, SystemSettingsProvider.FileOnly(_systemOptions), analysis);
         var services = Assert.IsType<AgentResult>(await legacy.ExecuteAsync("list_services", new AgentQuery { From = from, To = to }, default));
         Assert.Contains(services.Sections["traces"].Rows, row => (string?)row[0] == "db");
     }
@@ -174,8 +175,8 @@ public partial class StoreIntegrationTests
         builder.Services.AddSingleton<AgentRequestBudget>();
         builder.Services.AddSingleton<IAgentAnalysis>(Analysis());
         builder.Services.AddSingleton<IAgentQueries>(provider => new AgentQueries(
-            new AnalyticsExecutor(_connectionManager, _systemOptions, Resolver, NullLogger<AnalyticsExecutor>.Instance),
-            NullLogger<AgentQueries>.Instance, _systemOptions, provider.GetRequiredService<IAgentAnalysis>()));
+            new AnalyticsExecutor(_connectionManager, _systemOptions, SystemSettingsProvider.FileOnly(_systemOptions), Resolver, NullLogger<AnalyticsExecutor>.Instance),
+            NullLogger<AgentQueries>.Instance, SystemSettingsProvider.FileOnly(_systemOptions), provider.GetRequiredService<IAgentAnalysis>()));
         builder.Services.AddMcpServer().WithHttpTransport(o => o.Stateless = true).WithTools<AgentTools>();
         await using var app = builder.Build();
         app.Use((context, next) => context.RequestServices.GetRequiredService<AgentRequestBudget>().InvokeAsync(context, next));
@@ -224,6 +225,6 @@ public partial class StoreIntegrationTests
         }
     }
 
-    private AgentAnalysis Analysis() => new(new AnalyticsExecutor(_connectionManager, _systemOptions, Resolver, NullLogger<AnalyticsExecutor>.Instance),
-        new AnalyticsCatalog(_connectionManager), NullLogger<AgentAnalysis>.Instance, _systemOptions);
+    private AgentAnalysis Analysis() => new(new AnalyticsExecutor(_connectionManager, _systemOptions, SystemSettingsProvider.FileOnly(_systemOptions), Resolver, NullLogger<AnalyticsExecutor>.Instance),
+        new AnalyticsCatalog(_connectionManager), NullLogger<AgentAnalysis>.Instance, SystemSettingsProvider.FileOnly(_systemOptions), _systemOptions);
 }

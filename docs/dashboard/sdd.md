@@ -8,6 +8,9 @@
 
 ## 组件
 
+- Go 适配：元数据、配置验证、面板分派与有界算术图分别位于 `go/internal/query/dashboards.go`、`panel_validation.go`、`panels.go`、`custom_panels.go`。保留原始 `configJson` 字符串（包括未知扩展字段），仅服务 view；更新用单条条件 UPDATE 防止旧草稿覆盖，HTTP 层不包含业务 SQL。
+- Go SQL 面板复用 Store 分析通道；metric/DSL/PromQL 复用对应查询服务。静态面板不执行查询，组容器仅执行叶子，全部返回原 `PanelData` 形状；节点仅接受有界算术 AST，不执行宿主代码。
+
 - `DashboardEntity`（SQLite）：name、kind（活动类型仅 view；历史 screen 原样保留）、config_json。
 - **面板协议（version=1，`DashboardConfig`）**：`{version,time:{preset},refreshSeconds,panels:[{id,title,type,layout:{w,h},unit,showLegend,query:{kind,...}}]}`。旧协议（面板根挂 sql/queryId/rowLimit、无 query 字段）兼容解析与执行。
 - `PanelQueryConfig`（Dashboard.Shared）：kind 多态平铺——

@@ -8,6 +8,7 @@
 /configs/system.json
 /configs/system.runtime.json
 /configs/system.yaml
+/configs/appsettings.json
 /configs/plugins/
 .env
 .env.*

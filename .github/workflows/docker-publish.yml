@@ -107,13 +107,14 @@ jobs:
           path: .artifacts/release-ui
       - name: 发布独立运行程序
         run: |
-          # 单文件 + 原生库内嵌；实测 R2R/单文件压缩会让体积涨到 96MB 且启动变慢（解压开销），
-          # 故关闭二者，保留最优的 ~72MB / 2s 冷启动。不裁剪以规避反射框架的启动崩溃风险。
+          # 单文件 + 原生库内嵌 + 单文件压缩：win-x64 exe 166MB → 72MB、解压目录 174MB → 80MB（压缩包仍约 69MB）。
+          # 代价是运行时私有内存约 +60MB、工作集约 +100MB，冷启动首次解压多约 0.5s；取舍见 docs/deployment/sdd.md。
+          # R2R 只会变大（仅 R2R 231MB、R2R+压缩 96MB），关闭；不裁剪：full/partial 裁剪后启动即崩溃（Maomi 模块反射、MCP JSON 反射）。
           dotnet publish src/SData/SData.csproj -c Release -r "$RID" --self-contained true \
             -p:UseAppHost=true \
             -p:PublishSingleFile=true \
             -p:IncludeNativeLibrariesForSelfExtract=true \
-            -p:EnableCompressionInSingleFile=false \
+            -p:EnableCompressionInSingleFile=true \
             -p:PublishReadyToRun=false \
             -p:PublishTrimmed=false \
             -o .artifacts/publish --nologo

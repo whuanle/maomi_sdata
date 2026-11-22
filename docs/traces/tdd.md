@@ -4,6 +4,7 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @TR-PF14 trace_id 索引策略 | `DuckDbResourceTests.TraceIndex_ExistsOnHotTableAndRemovedOnFreeze`、仓库外 100 万行 A/B | 2026-11-21：热表存在索引、冻结快照删除；点查 p99 1.022ms、有索引文件28.8MB；无索引点查 p99 6.414ms、文件10.0MB |
 | @TRACES-SEARCH1 筛选与聚合 | `tests/SData.Store.Tests/QueryDslTests.cs`、`QueryDslExecutorTests.cs` | 历史通过（2026-11-15），本次未重跑此组 |
 | @TRACES-SEARCH2 跨天 | 同上，跨天天表用例 | 历史通过（2026-11-15） |
 | @TRACES-SEARCH3 非法条件 | `QueryDslTests.cs` | 历史通过（2026-11-15） |

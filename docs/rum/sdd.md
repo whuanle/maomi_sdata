@@ -45,3 +45,17 @@
 
 - T612 探针 SDK、T613 查询面、T614 回放、T615 热力、T616 实时热力（SignalR）/坐标增强/页面过滤
 - RUM 三表族 rum_session/rum_event/rum_replay 共用 Retention.Rum；RumStore 所有查询及分析 sessions 来源经台账解析冷热数据，项目与时间参数绑定不变。
+
+## Go 迁移边界（2026-11-22）
+
+- `go/internal/rum` 实现项目元数据、严格 Origin/Referer 校验、gzip/plain beacon 和全部普通查询；`go/cmd/sdata/rum_handlers.go` 提供独立 HTTP 适配器，管理写操作要求 admin。
+- SQLite 仅保存 `rum_project`；初始化增量补充采样率和来源列，兼容已有 C# 项目，不删除旧 Go 占位时序表，也不将其历史数据冒充 DuckDB 数据。
+- `go/internal/store/rum.go` 复用总行数/字节预算、后台批量 Appender、关闭排空和统计；按事件 UTC 日期写入与 C# 相同列顺序的三个天表族。请求线程不执行 DuckDB 写入。
+- 查询全部绑定项目、时间、分页、路径和会话参数；窗口最多 30 天，事件最多 1000 条；会话搜索合并三族数据。保留普通 sessions 旧响应口径，完整摘要使用 sessions/search。
+- 启动经 `initializeRum`（生产者启动前），路由绑定 `handleRum*`；共享表名解析接受三类 RUM 域，供分析搜索使用。运行说明见 [sop](sop.md)。
+- `SData:Rum:CorsOrigins` 为可选全局上限，config/beacon/预检都与项目来源取交集；空列表不另设上限，非空且全部非法时拒绝所有来源。错误项目来源拒绝使用并记录项目键，不输出原始配置。
+- `go/internal/rum/live*.go` 实现 SignalR JSON/WebSockets：协商只广告 WebSockets/Text，支持记录分隔符握手、Subscribe/Unsubscribe/SendClick、完成/错误、心跳与关闭；不实现 SSE、Long Polling、MessagePack 或流式 Hub 方法。
+- 管理连接要求有效 JWT（Bearer 或 access_token）且同源；探针握手与每次 SendClick 按项目和全局来源复检。强制使用握手项目，缺 sessionId 用连接 id，缺时间用接收时间。直接点击在背压时仍广播并返回 false；beacon 只对已接受记录广播，不重复入队。
+- 连接与待协商各最多 1024；协商令牌一次性、30 秒过期并绑定项目/来源/身份；每订阅者队列 64 条、最多订阅 128 项目，消息限 128 KiB，写超时 5 秒、握手 10 秒、读空闲 45 秒、心跳 15 秒。慢订阅者断开，不阻塞摄取；宿主取消和 Close 释放所有连接。
+- `RumSource` 复用共享 `DayTables` 的一次有界目录查询。旧 `/sessions` 的额外摘要字段保留 C# 默认值，非实时状态估计；需要计数使用 `/sessions/search`。
+- **尚未对齐**：冷归档查询；浏览器双端与断网重连尚未做本轮验收。探针只托管部署或开发目录中的既有真实构建产物；缺失、不可读、非普通文件返回 503，未修改或构建前端/C#。

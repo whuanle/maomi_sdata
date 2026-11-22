@@ -40,17 +40,23 @@ Feature: 版本镜像发布
     When 各平台构建且验证最终压缩包成功
     Then 对应版本提供五个独立运行包与校验清单且预发布不覆盖稳定版
 
-  @DEP-S6 @auto:python
+  @DEP-S15 @auto:python
   Scenario: 单文件独立包体积与启动验证
-    Given 使用单文件+原生库内嵌（不裁剪/R2R/单文件压缩）发布
+    Given 使用单文件、原生库内嵌与单文件压缩发布（不裁剪、不做 R2R）
     When 打包后由 smoke 验证原生启动、DuckDB 查询与登录
-    Then 包体积约 72MB 且冷启动约 2 秒，GC 配置已并入 runtimeconfig 且模板不进包
+    Then 压缩包约 69MB、解压后约 80MB，热启动约 2 秒，GC 配置已并入 runtimeconfig 且模板不进包
+
+  @DEP-S10 @auto:python
+  Scenario: 本地残留的前端产物不进入程序包
+    Given 发布目录中残留旧版本的前端静态文件
+    When 使用本次前端产物打包
+    Then 程序包的网页根目录只包含本次前端产物
 
   @DEP-S7 @manual
   Scenario: 程序包首次启动及升级
-    Given 用户已提供独立管理员密码
-    When 首次运行启动入口并在升级后再次启动
-    Then 首次生成配置和本机密钥且再次启动不覆盖原配置和数据
+    Given 用户解压程序包到独立目录，参数全部使用内置默认值
+    When 直接运行 SData 可执行文件，并在升级后再次启动
+    Then 首次启动生成本机 JWT 私钥，两次启动均可用且不覆盖 data 与 configs/rsa_private.key
 
   @DEP-S8 @manual
   Scenario: 独立程序不依赖镜像发布凭据
@@ -63,3 +69,27 @@ Feature: 版本镜像发布
     Given 某一目标平台构建或启动验证失败
     When 发布流水线汇总结果
     Then 不公开新的完整下载版本
+
+  @DEP-S11 @auto:xunit
+  Scenario: 空配置目录首次启动补齐默认配置
+    Given 配置目录为空且程序目录存在默认配置
+    When 服务首次启动
+    Then 配置目录生成与默认配置内容一致的覆盖配置文件
+
+  @DEP-S12 @auto:xunit
+  Scenario: 用户修改的覆盖配置重启后保持不变
+    Given 配置目录中的覆盖配置已被用户修改
+    When 服务再次启动
+    Then 用户修改的配置内容保持不变
+
+  @DEP-S13 @manual
+  Scenario: 容器映射数据与配置目录后重建仍可用
+    Given 用户将数据目录与配置目录映射到宿主机且两个目录均为空
+    When 容器首次启动并完成管理员登录，随后删除并重建容器
+    Then 数据库、覆盖配置与私钥保留在宿主机两个目录中，重建后原有数据仍可查询
+
+  @DEP-S14 @auto:xunit
+  Scenario: 工作目录缺少默认配置时不生成配置目录
+    Given 服务从不含默认配置文件的目录启动
+    When 服务加载配置
+    Then 该目录下不生成配置目录

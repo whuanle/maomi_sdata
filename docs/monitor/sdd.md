@@ -8,7 +8,11 @@
 
 ## 组件
 
+- Go 当前实现：`go/internal/store/status.go` 从实际目录一次收集七域天表并批量计数今日表，读取 DuckDB 有效内存限额。共享 writer 用固定七域原子计数分别记录 buffered/processed/dropped；HTTP 返回原域名及 buffer 枚举键，不再将全局总量复制到每个通道。存储读取异常显式失败并记录，缺表才表示零。
+- Go 系统/容器采样、MQ 消费运行态、冷层资源快照仍属于迁移门禁，不能把当前热层计数通过视为 Monitor 全部行为完成。
+
 - `MonitorController`（Api）：/health 与 /api/health（匿名、同一存活探针，后者兼容前端统一客户端）、/metrics（Prometheus 文本，匿名）、/api/monitor/status（登录）、/api/overview/status（登录，T314）。/metrics 暴露 `sdata_gc_heap_bytes` 与 `sdata_gc_collection_count_total{generation=0|1|2}`（进程启动以来累计回收次数，配合 Prometheus rate 观察 GC 调优效果）；数据源为 ResourceSampler 的 5 秒快照与 StatusResponse。
+- `/metrics` 另外直接读取运行时 GC 累计暂停秒数和最近一次 GC 的已提交内存，并读取 Store 的本地采样快照提供 DuckDB 跟踪内存与 WAL 大小；相应采样失败或尚不可用时不输出该存储指标，不将旧值当作当前值。Store 的写门、查询门、源切换门、按表门等待，写入器追加/事务提交，以及 rollup/归档/保留作业耗时以低基数累积直方图输出；成功聚合/归档行数、清理表数、过期冷档台账行及被删 rollup 行通过累积计数器输出。
 - `QueryStatusCommandHandler`：进程指标 + 缓冲统计 + 四域今日行数 + `mqConsumers`。MQ 快照经 Ingest.Shared 跨域契约读取，包含实例 ID、状态、进程累计落库数、最后落库时间与脱敏错误；无凭据，无额外状态端点。
 - `QueryOverviewCommandHandler`（T314）：七个数据类型域（logs/traces/metrics/iot/rum_event/rum_session/rum_replay）的今日行数、天表数、通道健康（缓冲统计按 IngestKind 小写键映射：log/trace/metric/telemetry/rumevent/rumsession/rumreplay），存储用量（热层 = AppConst.GetPath() + DuckDb:Path 的 FileInfo.Length；S3 标志读取 Settings.Shared 有效配置，不表示已连接）。合并配置实例与 MqRuntime 快照，输出不含连接参数及原始异常的 MQ 摘要，并单独返回共享队列长度。
 
@@ -20,6 +24,7 @@
 
 - 通道健康按数据类型维度而非接入协议维度：缓冲统计仅有 kind 粒度（http-json/otlp/esbulk 共享 log/trace/metric kind），协议级区分需按端点埋点，留待需要时演进。
 - 今日行数批量统计：`QueryStatusCommandHandler` 与 `QueryOverviewCommandHandler` 经 `IStoreInfo.CountTablesAsync` 把各域当日表合并为一条 `UNION ALL` 查询，单次查询门获取 + 单次连接克隆取代逐域 count；未知/不存在表按 0 计，输出与逐表统计一致。
+- PF13：`QueryOverviewCommandHandler` 对今日行数批量结果缓存 5 秒，缓存键按 UTC 日期隔离；缓冲、存储、MQ 摘要仍实时读取，TTL 内只省掉 CountTables 查询。
 - 存储探测直接读数据库文件大小（Monitor.Core 经传递引用 AppConst），不给 IStoreInfo 增加契约面。
 - 前端 api client 统一 `/api` 前缀，与全局 ApiRouteConvention("api") 对齐；overview 端点用 action 级绝对路由 `/api/overview/status`。
 - Overview 仅轮询 Monitor 接口，每 10 秒刷新；移除日志/链路样本查询，今日总量采用七域 UTC 数据日期口径，落库/丢弃为进程累计。共享队列长度不按类型累加。

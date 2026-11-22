@@ -4,6 +4,7 @@ using System.Text.Json;
 using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Infra.Exceptions;
+using SData.Settings.Services;
 using SData.Store;
 using SData.Store.Core;
 using SData.Store.Models;
@@ -589,7 +590,7 @@ public class QueryDslTests
             Manager = new DuckDbConnectionManager(Options, NullLogger<DuckDbConnectionManager>.Instance);
             Manager.InitializeAsync().GetAwaiter().GetResult();
             Buffer = new IngestBuffer(Options);
-            Writer = new IngestWriterService(Buffer, Manager, Options, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+            Writer = new IngestWriterService(Buffer, Manager, SystemSettingsProvider.FileOnly(Options), new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
         }
 
         /// <inheritdoc/>

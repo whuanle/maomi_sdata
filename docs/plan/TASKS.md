@@ -289,3 +289,87 @@ SData:Listeners:[ { Port, Protocol: "http"|"grpc" } ]   # T112 通用附加监�
 - 候选范围与条件：/charts（chartType/mode/series/groupBy/granularity/时间）、/metrics（name/label/aggregation/step）、/analytics（sql）、/iot（page/搜索关键字）、/rum（projectKey/tab）、/saved-searches（keyword）、/log-consumption（typeFilter）；/settings ?tab= 深链已有
 - 模式：每页一个 parse/serialize 纯函数模块（对齐 searchUrlState.ts 形态）+ 惰性初始化 + replace 同步 effect；非默认省略、非法回落
 - 验收：每页 `__tests__` 补 URL 恢复/回写用例；bdd 场景落对应域四件套
+
+## 性能专项（PF 组，2026-11-21 立项）
+
+依据：[store/performance-audit.md](../store/performance-audit.md)（发现 F1–F14、方案 §6、决策 D1–D7）。**全部 todo，未认领**。带「决策」的卡在对应 D 登记前不得开工。代码改动须先在 STATE 认领，只改卡内文件；行为变化同步 bdd / tdd / sop。
+
+### PF01 观测补齐：写入分段、锁等待、维护耗时、GC 与内存 [M] · 依赖 无
+- 文件：`src/store/SData.Store.Core/IngestWriterService.cs`、`DuckDbConnectionManager.cs`、`RollupService.cs`、`ArchiveService.cs`、`RetentionService.cs`；`src/monitor/SData.Monitor.Api/MonitorController.cs`（`/metrics` 输出处）、`src/monitor/SData.Monitor.Core/Handlers/MonitorHandlers.cs`；`tests/SData.Store.Tests/`
+- 内容：flush 分段耗时（追加 / 提交，检查点可得部分）；写门、查询门、交接锁等待直方图；Rollup / 归档 / 保留每轮耗时与行数；`GC.GetTotalPauseDuration()`、`GC.GetGCMemoryInfo().TotalCommittedBytes`；`duckdb_memory()` 追踪值与 WAL 字节。核对 `monitor/sop.md:19` 所指的"DuckDB 写入耗时"指标是否存在，不存在则补齐。
+- 验收：指标单测（计数与耗时非负，锁等待可观测）；`/metrics` 本地冒烟可见；业务行为不变，Store.Tests 全绿。
+
+### PF02 压测场景补齐（仓库外）[M] · 依赖 PF01
+- 文件：`F:\demo\sdata-bench\plans\pf02-plan.json`、`ScenarioRunner.cs`、`Probe.cs`（不在本仓库）
+- 内容：≥1 小时指标写入稳态 + Rollup；保留 / 归档场景（测试用缩短 HotDays）；MQ 场景（需 broker，缺环境标"待集成窗"）；traces 索引 A/B 所需的构建开关；timeline 增加 PF01 指标、`duckdb_memory`、WAL 字节。
+- 验收：计划文件通过 smoke；短时和各专项产出 summary.json 与逐秒 CSV；一小时指标、归档/保留、MQ、trace-index A/B 四项当前未全绿不得标 PF02 done。
+
+### PF03 配置 A/B 实验矩阵（只改配置）[S] · 依赖 PF02
+- 文件：结果回填 `docs/store/performance-audit.md`（§5 增补表）；不改代码
+- 内容：`threads` 2/4/8；`MaxConcurrentQueries` 1/2/4；`MALLOC_ARENA_MAX=2`；`DOTNET_gcServer=0` 对照；DuckDB 压缩与检查点相关设置（取值以 DuckDB.NET 1.5.6 支持的为准）。每组记录写入上限、分析 QPS、明细 p99、RSS 与 duckdb 追踪内存、OOM 次数。
+- 验收：threads/max_queries 9组矩阵与候选复跑已完成，暂提议 4/2；MALLOC_ARENA_MAX、DOTNET_gcServer、压缩与检查点对照留后续实验，并与 `alerts/sop.md:12` 及内存复盘约束核对。
+
+### PF04 Rollup 增量化与聚合降本 [M] · 依赖 无（验收对照用 PF01）
+- 文件：`src/store/SData.Store.Core/RollupService.cs`；`src/store/SData.Store.Core/DuckDb/Ddl/`（新增幂等水位 DDL，随 DuckDbSchemaBootstrapper 应用）；`tests/SData.Store.Tests/RollupTests.cs`
+- 内容：水位（DuckDB 元表，与 DELETE / INSERT 同事务）+ 迟到窗口（与 C6 滞后约束一致），替代每轮 5 小时全量回算；先按 `(name, labels)` 聚合，再对分组计算 `labels_hash`（去掉逐行 md5）；每轮桶数上限。
+- 验收：RollupTests 6/6 保持；新增用例：仅回算新关闭桶与迟到窗口、崩溃后自愈、C6 滞后约束；PF02 场景中每轮耗时较基线下降（数值回填 performance-audit）。
+
+### PF05 独立维护门 [L] · 依赖 PF01、PF04、决策 D1
+- 文件：`src/store/SData.Store.Core/DuckDbConnectionManager.cs`（门与准入）、`RollupService.cs`、`ArchiveService.cs`、`RetentionService.cs`、`StorePerformanceMetrics.cs`；`tests/SData.Store.Tests/DuckDbResourceTests.cs`
+- 内容：维护门并发 1 承接 Rollup 聚合、归档 COPY / 索引构建、保留 DELETE；写门只保留 DDL、目录切换与最终短事务；查询门不被维护任务占用。三门各自有界，总并发有上限。维护等待已输出直方图并可取消。
+- 验收：DuckDbResourceTests 全绿（128 MB 下 20 轮摄取 / 宽查询 / 回填 / CHECKPOINT）；PF02 场景中开启 Rollup 时日志写入 p99 不高于基线 +20%，写门持有 p99 < 50 ms。
+
+### PF06 归档 COPY 与词项索引移出写门 [M] · 依赖 PF05
+- 文件：`src/store/SData.Store.Core/ArchiveService.cs`、`ColdTermIndex.cs`、`DuckDbConnectionManager.cs`；`tests/SData.Store.Tests/ArchiveTests.cs`、`ArchiveLifecycleTests.cs`
+- 内容：COPY、词项索引构建和归档 CHECKPOINT 改用维护门持有下的克隆只读连接，不获取写门；冻结表不再接收写入；S3 上传期间不占写门；行数校验与台账顺序不变（COPY → 校验 → 索引 → 台账 → DROP）。
+- 验收：ARCH1–3 与归档生命周期用例全绿；新增：归档期间并发写入零丢弃，写门持有 p99 < 50 ms（MinIO 部分待集成窗）。
+
+### PF07 保留与归档交接锁收窄 [S] · 依赖 无（对照用 PF01）
+- 文件：`src/store/SData.Store.Core/RetentionService.cs`、`ColdLedgerCache.cs`、`TableResolver.cs`；`tests/SData.Store.Tests/ArchiveTests.cs`（三段保留、锁外删除与失败重试）
+- 内容：`ApplyRetentionAsync` 的交接锁只包目录切换；S3 删除（`ExpireColdObjectsAsync`）与 rollup DELETE 移出交接锁；CHECKPOINT 保留，但移出交接锁。与 `store/sdd.md` "网络操作不占交接锁"对齐。
+- 验收：三段保留用例全绿；交接锁持有 p99 < 100 ms（不含 S3 删除，以 PF01 指标为准）。
+
+### PF08 写入器与入口热路径降本 [L] · 依赖 PF01、PF03
+- 文件：`src/store/SData.Store.Core/IngestBuffer.cs`、`IngestWriterService.cs`；`src/ingest/SData.Ingest.Core/Services/IngestService.cs`、`IngestItemMapper.cs`、`IngestJsonSerializer.cs`；`src/ingest/SData.Ingest.Shared/Models/IngestModels.cs`；`src/store/SData.Store.Shared/IIngestBuffer.cs`（契约增量须在 STATE 登记）
+- 内容：简单 JSON 一次映射后按批提交；批量接口逐项有界入 Channel、保留 accepted/dropped；共享 JSON 序列化选项缓存，避免重复构造；去掉 `Dictionary<string, object?>` 往返、保留原始 JSON 片段、批列表复用和字节预算仍需续做；`LocalTraceExporter` resource 缓存（不改变策略）。
+- 验收：Ingest / Store 测试全绿；PF02 对照：饱和时平均 CPU 下降 ≥ 20%（提案）。
+
+### PF09 MQ 批量确认流水线 [L] · 依赖 PF01、决策 D4
+- 文件：`src/ingest/SData.Ingest.Core/Consumers/KafkaInstanceRunner.cs`、`RabbitMqInstanceRunner.cs`、`PulsarInstanceRunner.cs`、`MqConsumerSupport.cs`；`src/store/SData.Store.Core/IngestBuffer.cs`（PersistLogsAsync 批化）、`IngestWriterService.cs`（有等待者时立即刷写）
+- 内容：消费循环不再逐条等待回执，按批入缓冲、按批确认 offset，保持 at-least-once；`PersistLogsAsync` 一批一个回执；写入器存在持久化等待者时不再固定等待 200 ms。
+- 验收：`tests/SData.Ingest.Tests/MqRuntimeTests.cs`、`MqMessageBlockingTests.cs`、`MqLogDecoderTests.cs` 与 `tests/SData.Store.Tests/MqPersistenceTests.cs` 全绿；新增 offset 语义与失败阻塞用例；100 条/消息 ≥ 1 万行/秒（Kafka 集成窗补验）。
+
+### PF10 多连接并发追加验证（仓库外实验）[S] · 依赖 PF03
+- 文件：仓库外实验工程 `F:\demo\pf10-concurrent-append\`（不入本仓库）；结论写入 `docs/store/performance-audit.md`
+- 内容：在 DuckDB.NET 1.5.6.1 下验证单连接及 2/4/8 连接并发追加同一天表的吞吐、批提交延迟、CHECKPOINT 干扰与数据核验。
+- 验收：已完成；并发连接未提供稳定吞吐收益，结论为维持单写循环，不另开多 worker 实施卡。
+
+### PF11 HTTP 429 与字节预算 [M] · 依赖 决策 D2、D5，PF08
+- 文件：`src/ingest/SData.Ingest.Api/IngestController.cs`、`src/ingest/SData.Ingest.Api/Controllers/OtlpV1Controller.cs`、`src/ingest/SData.Ingest.Api/Controllers/EsBulkController.cs`；`src/ingest/SData.Ingest.Core/Services/IngestService.cs`；`src/store/SData.Store.Core/IngestBuffer.cs`、`SData.Store.Shared/IIngestBuffer.cs`；`src/infra/SData.Infra.Configuration.Shared/SystemOptions.cs`（新增键按 C4 登记）；`docs/ingest/bdd.md`、`docs/ingest/sdd.md`
+- 内容：JSON 接入余量不足时在解析后按字节预检返回 429（附 Retry-After，与 architecture / ingest 文档一致）；OTLP 读取完整报文后解析前预检，再逐条入队；ES Bulk 读取批次后预检；缓冲增加估算字节预算，默认 256 MiB。
+- 验收：429 语义测试；OTLP 满载重试无重复（测试）；1 KB / 4 KB 正文饱和 10 分钟无 OOM（PF02 场景）。
+
+### PF12 OTLP 请求体与属性转换降本 [S] · 依赖 无
+- 文件：`src/ingest/SData.Ingest.Api/Controllers/OtlpV1Controller.cs`、`src/ingest/SData.Ingest.Core/Services/OtlpProtoParser.cs`
+- 内容：请求体一次读入（去掉多余 ToArray / GetString）；EventsToJson 中的 attributes 直接写入 Utf8JsonWriter，不经 Parse + Clone。
+- 验收：`tests/SData.Ingest.Tests/OtlpParserTests.cs`、`OtlpProtoSmokeTests.cs`、`OtlpGrpcIntegrationTests.cs` 全绿；OTLP 压测 CPU 对照。
+
+### PF13 查询通道分层 [M] · 依赖 PF05、决策 D7
+- 文件：`src/store/SData.Store.Core/DuckDbConnectionManager.cs`、`StorePerformanceMetrics.cs`、`AnalyticsExecutor.cs`；`src/alerts/SData.Alerts.Core/AlertExecutionGate.cs`；`src/monitor/SData.Monitor.Core/Handlers/QueryOverviewCommandHandler.cs`、`MonitorHandlers.cs`；`docs/alerts/sdd.md`
+- 内容：告警使用专用槽，不占用用户查询槽；概览 `CountTablesAsync` 结果缓存 5 秒；告警评估保留现有串行预算与超时语义。
+- 验收：PF02 混合负载下明细 p99 在分析并发 2 时 ≤ 100 ms；告警预算语义测试通过；alerts/sdd 同步。
+
+### PF14 trace_id 索引 A/B 与策略 [M] · 依赖 PF02
+- 文件：`src/store/SData.Store.Core/TimeTables.cs`、`DuckDbConnectionManager.cs`（FreezeDayAsync 删除索引的逻辑）、`TraceStore.cs`；`tests/SData.Store.Tests/DuckDbResourceTests.cs`；`docs/traces/sdd.md`
+- 内容：对照组（有索引 / 无索引）测 100 万行写入、文件大小与点查延迟；当前策略保持热表建索引、冻结快照删除索引。
+- 验收：A/B 数据已入 performance-audit；热建冷删回归全绿。
+
+### PF15 指标查询 series 维度化 [L] · 依赖 决策 D6、PF03
+- 文件：`src/store/SData.Store.Core/MetricStore.cs`；`src/metrics/SData.Metrics.Core/Promql/PromqlSqlTranslator.cs`；`TimeTables.cs`；`RollupService.cs`；内嵌 DDL
+- 内容：labels 去重为 series 维度表，行上保存 series_id；标签过滤下推到维度表；C6 rollup 同步调整（契约变更须登记）。
+- 验收：迁移幂等；Metrics.Tests 全绿；指标查询对照数据入文档。
+
+### PF16 自身遥测策略执行 [S] · 依赖 决策 D3
+- 文件：`src/SData/Telemetry/LocalTraceExporter.cs`、`LocalMetricExporter.cs`；`src/SData/Modules/ConfigureOpenTelemetryModule.cs`
+- 内容：保留固定本机资源与现有采集策略；复用链路 resource JSON，并缓存指标标签维度 JSON。
+- 验收：`tests/SData.Ingest.Tests/SelfTelemetryTests.cs` 全绿；小批量压测写入量对照；AGENTS 第 5 节同步（若规则变化）。

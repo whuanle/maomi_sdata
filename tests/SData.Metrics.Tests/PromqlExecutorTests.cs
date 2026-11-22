@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Metrics.Promql;
+using SData.Settings.Services;
 using SData.Store;
 using SData.Store.Core;
 using SData.Store.QueryDsl;
@@ -38,7 +39,7 @@ public class PromqlExecutorTests : IDisposable
         _connectionManager.EnsureDayTablesAsync(TimeTables.MetricsPrefix, [today, today.AddDays(1)]).GetAwaiter().GetResult();
 
         var resolver = new LocalOnlyResolver(_connectionManager);
-        _executor = new PromqlExecutor(_connectionManager, resolver, options);
+        _executor = new PromqlExecutor(_connectionManager, resolver, SystemSettingsProvider.FileOnly(options));
     }
 
     /// <summary>

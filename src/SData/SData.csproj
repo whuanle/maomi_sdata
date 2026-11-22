@@ -3,6 +3,8 @@
 	<PropertyGroup>
 		<RootNamespace>SData</RootNamespace>
 		<NoWarn>$(NoWarn);CA1707;CS1591;SA1600;SA1623</NoWarn>
+		<!-- MQTTnet 5.2 起官方拆包：server 独立为 MQTTnet.Server（T000 封板清单遗漏）；以 VersionOverride 引用同版本 5.2.0.1603，避免改动封板的 Directory.Packages.props（T140 决策日志已登记） -->
+		<CentralPackageVersionOverrideEnabled>true</CentralPackageVersionOverrideEnabled>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -17,37 +19,70 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="$(RepoRoot)\src\infra\SData.Infra.Core\SData.Infra.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\infra\SData.Infra.Configuration.Shared\SData.Infra.Configuration.Shared.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\infra\SData.Infra.Api\SData.Infra.Api.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\database\SData.Database.Sqlite\SData.Database.Sqlite.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\store\SData.Store.Core\SData.Store.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\auth\SData.Auth.Core\SData.Auth.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\ingest\SData.Ingest.Core\SData.Ingest.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\logs\SData.Logs.Core\SData.Logs.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\traces\SData.Traces.Core\SData.Traces.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\metrics\SData.Metrics.Core\SData.Metrics.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\iot\SData.Iot.Core\SData.Iot.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\rum\SData.Rum.Core\SData.Rum.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\analytics\SData.Analytics.Core\SData.Analytics.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)/src/alerts/SData.Alerts.Core/SData.Alerts.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\dashboard\SData.Dashboard.Core\SData.Dashboard.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\settings\SData.Settings.Core\SData.Settings.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\monitor\SData.Monitor.Core\SData.Monitor.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)/src/agents/SData.Agents.Core/SData.Agents.Core.csproj" />
+		<!-- 单一程序集：原拆分项目（Shared/Core/Api/Sqlite）已全部并入本文件，命名空间保持不变，源码位于 {Domain}/{Layer}/。 -->
+		<InternalsVisibleTo Include="SData.Ingest.Tests" />
+		<InternalsVisibleTo Include="SData.Store.Tests" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+		<!-- DuckDB 内嵌 DDL（原 SData.Store.Core）：目录 Store/Core ↔ 原根命名空间 SData.Store.Core，逻辑名 SData.Store.Core.DuckDb.Ddl.*.sql 与拆分时期一致。 -->
+		<EmbeddedResource Include="Store\Core\DuckDb\Ddl\*.sql" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- OTLP 官方 proto 源（opentelemetry-proto v1.3.2），编译期由 Grpc.Tools 生成 C#（不提交生成物）；Both=服务端基类 + 客户端存根（T112 集成测试用） -->
+		<Protobuf Include="Ingest\Core\OtlpProtos\opentelemetry\proto\**\*.proto" ProtoRoot="Ingest\Core\OtlpProtos" GrpcServices="Both" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 模块框架与横切 -->
+		<PackageReference Include="Maomi.Core" />
+		<PackageReference Include="MediatR" />
+		<PackageReference Include="FluentValidation" />
+		<PackageReference Include="Yitter.IdGenerator" />
 		<PackageReference Include="Serilog.AspNetCore" />
-		<PackageReference Include="Serilog.Sinks.File" />
+
+		<!-- ASP.NET Core / OpenAPI / MCP -->
+		<PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+		<PackageReference Include="ModelContextProtocol.AspNetCore" />
+		<PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+
+		<!-- 观测 -->
+		<PackageReference Include="OpenTelemetry" />
 		<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.Http" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
-		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
-		<PackageReference Include="NetEscapades.Configuration.Yaml" />
+
+		<!-- 数据访问 -->
+		<PackageReference Include="Microsoft.EntityFrameworkCore" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+		<PackageReference Include="DuckDB.NET.Data.Full" />
+		<PackageReference Include="AWSSDK.S3" />
+
+		<!-- 缓存 / 配置 / 日志抽象（原各层项目分别引用） -->
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+
+		<!-- OTLP gRPC（Ingest） -->
+		<PackageReference Include="Google.Protobuf" />
+		<PackageReference Include="Grpc.AspNetCore" />
+		<PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+
+		<!-- MQ 日志消费客户端（Kafka/RabbitMQ/Pulsar，均默认关闭，见 Ingest/Core/Consumers/） -->
+		<PackageReference Include="Confluent.Kafka" />
+		<PackageReference Include="RabbitMQ.Client" />
+		<PackageReference Include="DotPulsar" />
+
+		<!-- IoT -->
+		<PackageReference Include="MQTTnet" />
+		<PackageReference Include="MQTTnet.Server" VersionOverride="5.2.0.1603" />
 	</ItemGroup>
 
 </Project>

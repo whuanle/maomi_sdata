@@ -1,7 +1,6 @@
 """Stage only publish output and public assets, then archive without runtime data."""
 import argparse
 import hashlib
-import json
 from pathlib import Path
 import re
 import shutil
@@ -34,11 +33,12 @@ def validate_tree(folder, rid=None):
             raise ValueError(f"Unexpected symlink: {relative}")
         if not file.is_file():
             continue
+        # 配置只有包内 appsettings.json 一份；configs/ 仅在运行时生成（RSA 私钥、首次启动复制的 appsettings.json），任何 configs 文件都不得随包发布。
         if (file.suffix.lower() in FORBIDDEN or file.name.startswith(".env")
                 or file.name.lower().endswith(("-wal", "-shm"))
                 or any(p.lower() in {"data", "logs", "node_modules", ".git"} for p in relative.parts)
                 or file.name.lower() == "appsettings.development.json"
-                or relative.as_posix() in {"configs/system.json", "configs/system.yaml"}):
+                or relative.parts[0].lower() == "configs"):
             raise ValueError(f"Runtime/private file in package: {relative}")
         if file.suffix.lower() in {".json", ".xml", ".txt", ".config", ".yaml", ".yml"}:
             text = file.read_text(encoding="utf-8", errors="replace")
@@ -63,18 +63,10 @@ def main():
     stage = output / name
     # Never reuse an old stage, where runtime files could have been generated.
     stage.mkdir(parents=True, exist_ok=False)
-    shutil.copytree(publish, stage, dirs_exist_ok=True)
+    # A local publish can carry a stale wwwroot from earlier UI builds; the release UI is the only web root.
+    shutil.copytree(publish, stage, dirs_exist_ok=True,
+                    ignore=lambda folder, names: {"wwwroot"} if Path(folder) == publish else set())
     shutil.copytree(ui, stage / "wwwroot", dirs_exist_ok=True)
-    config_dir = stage / "configs"
-    config_dir.mkdir(exist_ok=True)
-    template = json.loads((ROOT / "configs/system.example.json").read_text(encoding="utf-8"))
-    template["SData"]["Auth"]["InitialAdminPassword"] = ""
-    template["SData"]["RabbitMq"]["Uri"] = ""
-    template["SData"]["Ingest"]["InitialApiKey"] = ""
-    (config_dir / "system.example.json").write_text(
-        json.dumps(template, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    script = "start.ps1" if args.rid.startswith("win-") else "start.sh"
-    shutil.copyfile(ROOT / "tool/Release" / script, stage / script)
     shutil.copyfile(ROOT / "tool/Release/README.txt", stage / "README.txt")
     validate_tree(stage, args.rid)
     executable = stage / ("SData.exe" if args.rid.startswith("win-") else "SData")
@@ -82,7 +74,6 @@ def main():
         raise ValueError("Missing self-contained apphost")
     if not args.rid.startswith("win-"):
         executable.chmod(0o755)
-        (stage / script).chmod(0o755)
     if args.rid.startswith("win-"):
         archive = output / f"{name}.zip"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:

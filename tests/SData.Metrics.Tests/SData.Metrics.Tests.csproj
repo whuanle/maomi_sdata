@@ -6,7 +6,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="$(RepoRoot)\src\metrics\SData.Metrics.Core\SData.Metrics.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\SData\SData.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

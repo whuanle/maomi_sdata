@@ -15,7 +15,7 @@
 - 汇总仅返回事实：日志趋势、span/去重 trace/耗时分位数、父子 span 服务依赖（按标识去重，排除歧义）；RUM 按项目统计页面上报、distinct session、Vitals p75与错误。会话不是用户，分组 trace 数不可求和，有限依赖不代表完整拓扑。
 - 每 Key 默认每分钟60请求、2并发，全局8并发；可在 SData:Agents 调低或在硬上限内调整。单次查询最多10秒并中断原生工作。
 - 固定 SQL 限制行数；新工具完整服务结果预算32KiB（为SDK文本/结构双包装留余量），旧工具行预算28KiB；超额标记 truncated，字段截短单列 fieldTruncated，当前不抽样。raw attributes/resource/events/payload/replay 不输出；常见秘密掩码非完整DLP。返回 completeness=unknown，不承诺冷层完整性；目录过大可丢弃 metadata 并标记截断。
-- Host 仅 Server 主机、loopback及 Agents.AllowedHosts；Origin仅同源。MCP请求体最多64KiB，不开放跨域。
+- Host 不做白名单（服务监听所有网卡，与其它接口一致）；Origin 仅同源；Agent Key（Bearer）必需。MCP请求体最多64KiB，不开放跨域。
 
 ## 局限
 

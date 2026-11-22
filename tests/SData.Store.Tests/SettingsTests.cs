@@ -363,6 +363,17 @@ public class SettingsTests
             if (memoryLimit == FailValue) throw new InvalidOperationException("fake application failure");
             MemoryLimit = memoryLimit;
         }
+
+        public int Threads { get; private set; } = 2;
+        public int MaxConcurrentQueries { get; private set; } = 1;
+
+        public Task ApplyThreadsAsync(int threads, CancellationToken cancellationToken)
+        {
+            Threads = threads;
+            return Task.CompletedTask;
+        }
+
+        public void ApplyMaxConcurrentQueries(int maxConcurrentQueries) => MaxConcurrentQueries = maxConcurrentQueries;
     }
 
     /// <summary>S3 SECRET 管理假实现（记录调用）.</summary>

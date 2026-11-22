@@ -4,6 +4,7 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @DASH-GO1/GO2 | `go/cmd/sdata/dashboard_parity_test.go`、`go/internal/query/panels_test.go` | 2026-11-22：定向通过；真实 SQLite/DuckDB 验证配置原文、分组叶子、409、节点表达式与定义拒绝；未进行浏览器完整操作或性能压测 |
 | @DASH-S112/S113/S116 | `transfer.test.ts`（整盘导出形状/往返、非法 JSON/kind/版本/重复 ID 拒绝）、`DashboardsPage.test.tsx`（卡片导出 Blob 内容、导入弹窗预填与保存、非法 JSON 不保存、只读可导出不可导入） | 2026-11-20：transfer 9/9、DashboardsPage 7/7、dashboards 目录 17 文件 97/97 全绿；本次改动文件 eslint 0 错 0 警告；独立目录 vite 生产打包通过（仅既有 chunk 大小警告）。typecheck 本次文件 0 错误，全量被既有 rum 工作区未提交改动（RumPage tooltip formatter、测试 .at）阻断，非本次改动；详情工具条导出入口与浏览器完整往返未验收。 |
 | @DASH-S114/S115 | `transfer.test.ts`（面板导出/导入往返、分组 id 与默认标签重映射、尺寸保留、无 id 拒绝）；画布导出与详情导入面板入口 | 2026-11-20：解析与 id 重映射层自动通过；画布/详情弹窗为薄接线未单独断言，浏览器验收未完成，bdd 标记 @manual。 |
 | @DASH-S104（空分组与拖入） | `GroupEditor.test.tsx`、`dashboardGroups.test.ts`、`dashboardGroupDrop.test.ts`、`DashboardGrid.test.tsx`、`DashboardGroupTests`；`.artifacts/group-empty-*.log` | 2026-11-19：新建仅名称、空组往返、编辑添加排序、中央高亮松手收纳、边缘排序和禁止嵌套通过；仪表盘84/84、后端68/68、lint通过。全量691/702，设置页及日志消费11项失败；typecheck被SettingsPage.tsx缺少Inbox引用阻断，非本次改动。真实浏览器拖入及保存重开未验收。 |

@@ -18,6 +18,8 @@
 
 ## 验收流程
 
+- Go：在 `go` 目录执行 `go test -tags duckdb_use_lib ./cmd/sdata -run TestPrometheusQueriesReturnRealSamples`，应验证选择器 70、区间速率 0.5、非法表达式 bad_data 和面板毫秒精度；请求需携带 Bearer 登录令牌。
+
 1. `dotnet test tests/SData.Metrics.Tests`（解析 42 + 端到端 4）。
 2. Grafana Prometheus 数据源对接（configs/grafana-note.md 4 步；无环境时 e2e 待集成窗）。
 

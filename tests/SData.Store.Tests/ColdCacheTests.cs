@@ -2,6 +2,7 @@ using global::Xunit;
 using Microsoft.Extensions.Logging.Abstractions;
 using SData.Infra;
 using SData.Infra.Configuration;
+using SData.Settings.Services;
 using SData.Store;
 using SData.Store.Core;
 
@@ -25,7 +26,7 @@ public class ColdCacheTests
             var options = new SystemOptions();
             options.ColdCache.MaxBytes = 1L * 1024 * 1024 * 1024; // 先给足容量
             var objectStore = new CompositeObjectStore(new LocalObjectStore(), new S3ObjectStore(options, NullLogger<S3ObjectStore>.Instance));
-            using var cache = new ColdCacheService(options, objectStore, NullLogger<ColdCacheService>.Instance);
+            using var cache = new ColdCacheService(SystemSettingsProvider.FileOnly(options), objectStore, NullLogger<ColdCacheService>.Instance);
             await cache.StartAsync(CancellationToken.None);
 
             var keyA = "data/cold/logs/20200101.parquet";

@@ -9,7 +9,8 @@
 ## 组件
 
 - `IngestController`（`/api/ingest/*`）：OTLP logs/traces/metrics + 简单 JSON 批量（logs/traces/metrics/iot）。
-- `OtlpV1Controller`（`/v1/logs|traces|metrics`，T111）：标准 OTLP/HTTP 接收器，`application/x-protobuf` 与 JSON 双格式、gzip 请求体自动解压；旧路径 `/ingest/otlp/v1/*` 转发同一处理链（保留一个版本周期后废弃）。
+- 简单 JSON 批量入口先按请求映射为四类 Store 记录，再按批调用 `IIngestBuffer` 的批量方法；批量接口仍逐项执行有界 `TryWrite` 并保留 accepted/dropped 语义。映射字典共享缓存 `JsonSerializerOptions`；原始 JSON 片段直传与字节预算属于 PF11，不在本切片改变。
+- `OtlpV1Controller`（`/v1/logs|traces|metrics`，T111）：标准 OTLP/HTTP 接收器，`application/x-protobuf` 与 JSON 双格式、gzip 请求体自动解压；请求体直接流入解析缓冲，JSON 从缓冲区解码而不创建额外字节数组；旧路径 `/ingest/otlp/v1/*` 转发同一处理链（保留一个版本周期后废弃）。
 - `OtlpGrpcLogs/Traces/MetricsService`（`Ingest.Core/Grpc/`，T112）：OTLP gRPC 三服务，复用 OtlpProtoParser 同一解析链与逐条入缓冲；缓冲满经 `partialSuccess` 上报拒绝数（Collector 可识别）。
 - `OtlpLogParser / OtlpTraceParser / OtlpMetricParser`（JSON）+ `OtlpProtoParser`（proto，static，经 `OtlpProtoParserService` 包装注入）：resource 属性提取 `service.name`、severityNumber→文本、nanos 时间戳、kvlist→JSON 字符串、histogram 派生 `.count/.sum`。
 - `EsBulkController` + `EsBulkParser`（`/_bulk`，T120）：NDJSON index/create → 日志（`_index`→logs.source），update/delete 返回 ES 形状错误项，缓冲满整批 429。
@@ -20,6 +21,11 @@
 
 ## 关键决策
 
+- Go 对齐切片位于 `go/internal/ingest`：HTTP protobuf 和 gRPC 共用类型化 mapper，gRPC 不再序列化请求后重新解析；JSON 用类型化结构及原始标量保留 hex 标识和 64 位时间/整数，不经 float64 中转。
+- C# 兼容边界显式保留：日志/指标时间截断至毫秒、span 至微秒且先分别截断起止再求差；JSON 非字符串正文/事件保持原始形状，proto 事件属性为对象；JSON 字符串 int 属性仍为字符串。proto 无 resource 的数值点 labels 为 `{}`，JSON 则保留点标签；JSON 数字 count=0 生成序列，proto count=0 不生成；JSON histogram count 必须是数字。
+- Go HTTP 成功为 JSON `partialSuccess:null`（包括 protobuf 输入），背压为 429 + `Retry-After:1` + 仅 errorMessage，首次拒绝后停止；gRPC 尝试整批，仅拒绝时设置对应信号的计数。缓冲未接线或返回无效计数不伪报成功。gRPC 注册 gzip 解压，默认接收上限 4 MiB。
+- Go `Protocol.CanAcceptBytes` 供宿主接入缓冲预算，在解压后、解析前检查。`MaxBodyBytes` 默认 30,000,000，同时限制线缆与解压后体积（后者是比 C# 默认宿主更严格的内存保护）；超限 413，预算不足 429，坏报文 400。宿主路由、认证和缓冲预算接线独立验收，不代表整体 Go 重写完成。
+
 - 外部 exporter 分别使用 TraceHeaders/MetricsHeaders，统一适用于 grpc/http-protobuf；显式空字符串覆盖 SDK 环境变量 Header，避免清空后继承其它凭据。Header 的掩码与保存规则见 [settings 设计](../settings/sdd.md)。鉴权失败不影响固定本地出口。
 
 - 自身 Trace/Metrics 固定由宿主本地 exporter 写入 `IIngestBuffer`，不走 HTTP/gRPC、无需接入凭据。外部 OTLP 仅额外导出；导出期间抑制插桩并排除 OTLP 接收路径的服务器链路，防止回环递归。指标标签平铺并带 service/instance，直方图按现有存储保存 count/sum；满载沿用缓冲丢弃计数。
@@ -27,10 +33,13 @@
 1. OTLP 标准路径 `/v1/*` 与 gRPC 双通道，旧 `/api/ingest/otlp/v1/*` 保留一个版本周期（迁移期并存，见 bdd @INGEST-OT4）。
 2. 分层纯化：Api 只依赖 Shared 接口（`IIngestIngestor/IIngestKeyValidator/IOtlpParser/IOtlpProtoParser/IEsBulkParser`），实现在 Core；gRPC 服务类落 Core（proto 生成物在 Core，Api→Shared 单向无法引用），命名空间 `SData.Ingest.OtlpGrpc`（避开全局 `Grpc.*` 遮蔽）。
 3. 缓冲满：HTTP 返回 429 + partialSuccess 提示、gRPC 返回 partialSuccess 计数，不阻塞、不落盘。
+   - PF11 字节预算：`SData:Ingest:BufferByteBudgetBytes` 默认 256 MiB，缓冲按载荷估算字节计量；简单 JSON/OTLP/ES 在预算超限时返回 429 + `Retry-After: 1`，不把拒绝记录伪报为已接收。
 4. proto 选型：官方 opentelemetry-proto v1.3.2 + Grpc.Tools 编译期生成（`GrpcServices="Both"`），不引第三方 proto NuGet；生成物不提交。
 5. Kestrel 明文端点 `Http1AndHttp2` 实际只服务 HTTP/1（h2c 需显式 `HttpProtocols.Http2`）——附加 grpc 端口必须纯 HTTP/2（集成测试实证）。
 6. OTLP v1.3.2 形状：`ExportXxxPartialSuccess` 为顶级类型；proto 子消息默认 null 须显式 new。
+  - OTLP 性能降本不改变协议形状：gzip 直接从请求流解压到最终缓冲，span event attributes 由 `Utf8JsonWriter` 原位输出，不再先生成 JSON、再 Parse/Clone。
 7. MQ 消费定位为**可选输入通道**（默认关闭，不建任何连接，零外部依赖承诺不变）：MQ 不做内部中间层（内部缓冲仍由 IIngestBuffer 承担），只做外部日志管道的接入面。投递语义 at-least-once：缓冲满退避重试且不确认/不提交 offset，broker 不可达按 5/10/20/40/60 秒封顶退避，之后固定 60 秒重试，不崩溃宿主。Kafka 支持 SASL（Plain/SCRAM）及 TLS 协议选择；RabbitMQ 凭据经 AMQP URI，Pulsar 管理发现支持 Bearer token（数据通道 token 尚未暴露）。MQ 等待批量事务提交后确认，失败批次保留重试；故障重投可能重复，不承诺 exactly-once。
+   - PF09 批量回压切片：批量入缓冲一次尝试有界 Channel，返回被拒记录列表后只重试拒绝项；已接受记录不重复入队，原消息直到持久化回执与 broker 确认成功后才推进。
 8. **多实例热更新（2026-11-17）**：配置从「每类 MQ 单实例三键」升级为 `system:mq` 实例列表（Settings 域），管理器按实例指纹（配置 JSON）diff，只重启受影响实例；旧三键未保存新配置时内存合成兼容（见 settings 模块）。实例粒度：每实例独立连接 + 自己的 topic/队列与解析规则。
 9. **失败不跳过**：解析失败、空载荷、未知格式、零记录或部分记录失败均阻塞整条原消息，不写保底记录、不确认、不推进后续消费。共享处理循环持有原载荷退避重试；只有完整解析并提交后才返回给协议确认。解码器产生的失败记录仅用于预览/诊断，不能作为消费成功依据。
 

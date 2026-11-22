@@ -129,6 +129,7 @@ public class StorageMetricsTests
         public S3Options Target { get; set; } = new();
         public S3Options GetS3() => Target;
         public DuckDbSettings GetDuckDb() => new();
+        public RuntimeSettings GetRuntime() => new();
         public List<MqInstanceOptions> GetMqInstances() => [];
         public RetentionPlanOptions GetRetention() => new();
         public CompressionOptions GetCompression() => new();

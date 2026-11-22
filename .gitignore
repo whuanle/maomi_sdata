@@ -407,11 +407,12 @@ local-dev/test-dist/
 .env
 .env.local
 
-# 由 deploy/deploy-compose.sh 从 .env 生成的运行时配置（模板见 configs/system.example.json）
+# 历史遗留的运行时配置（当前版本只读 appsettings.json；忽略规则防止含密钥的旧文件被提交）
 /configs/system.json
 /configs/system.runtime.json
-# 本机私有运行时配置（含内网 IP/密码/AES 密钥），同上用 system.example.json 作模板
+# 本机私有配置（旧版本遗留，含内网 IP/密码/AES 密钥，禁止提交）
 /configs/system.yaml
+/configs/appsettings.json
 /configs/plugins/
 /.playwright-cli
 /outputs
@@ -426,6 +427,7 @@ local-dev/test-dist/
 /src/SData/data/
 # 宿主内嵌前端为构建产物（Dockerfile 从 ui 构建拷贝），不入库
 /src/SData/wwwroot/
+/ui/dist-output/
 
 # SData：ui pnpm workspace 子包（packages 目录为源码，勿套用上方 VS 模板的 NuGet packages 忽略规则）
 # 说明：T612 的 rum-sdk 曾被 **/[Pp]ackages/* 误忽略从未入库，T614 发现后修复并补录

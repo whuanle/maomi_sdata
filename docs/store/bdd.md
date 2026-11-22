@@ -4,6 +4,30 @@
 
 Feature: DuckDB 观测数据存储
 
+  @STORE-PF04 @auto:xunit
+  Scenario: Rollup 仅重算前进水位附近的迟到桶
+    Given 首轮回填已将水位写入 DuckDB，随后 DuckDB 连接管理器重启且旧桶与最近两个关闭桶又收到迟到指标
+    When 再次执行 5m 与 1h 回填
+    Then 最近两个关闭桶重新聚合，窗口外的旧桶不被扫描；水位与最后桶替换在同一事务提交
+
+  @STORE-PF04 @auto:xunit
+  Scenario: 水位写入失败后事务回滚并在重启后恢复
+    Given 最后一个 rollup 桶已有汇总，水位表约束会拒绝新的水位
+    When 回填替换该桶并尝试推进水位失败，随后重启 DuckDB 连接并移除故障后重试
+    Then 故障后重启仍保留原汇总和水位；重试更新迟到数据并推进水位
+
+  @STORE-PF07 @auto:xunit
+  Scenario: 记录源切换独占锁的持有时间
+    Given 源切换操作已获取独占租约
+    When 操作释放租约
+    Then `sdata_store_source_switch_lock_hold_seconds` 直方图记录从获取至释放的时间，且与锁等待时间分开
+
+  @STORE-PF09 @auto:xunit
+  Scenario: MQ 一批日志只等待一个持久化回执
+    Given 一批日志通过有界缓冲等待写入器
+    When 缓冲接收完整批次且写入器提交事务
+    Then 仅批次最后一条携带回执，回执在事务提交后完成，有等待者时跳过低水位等待
+
   @STORE-S36 @auto:xunit
   Scenario: 持续回填和重启不重复放大汇总存储
     Given 同一批指标反复参与汇总
@@ -236,6 +260,24 @@ Feature: 冷存档与三段保留（T512，契约 C4/C5）
     Given cold=30d：today-40d 与 today-10d 两个天表均先归档（归档即 DROP 热表，数据在冷层 parquet）
     When RetentionService 单轮清理
     Then 超过 hot+cold 的 today-40d 冷对象与台账行被清理；today-10d 在冷窗口内对象与台账存活
+
+  @STORE-PF07 @auto:xunit
+  Scenario: 过期冷对象删除不占用查询交接锁
+    Given 单个已归档对象超过热加冷总保留期，且对象删除被故障注入阻塞
+    When 保留任务清理过期对象并收到查询
+    Then 查询不等待删除网络请求；删除前对象从候选目录隐藏，删除失败后恢复台账和可查询性，下一轮可重试清理
+
+  @STORE-PF05 @auto:xunit
+  Scenario: Rollup、归档与保留串行共享维护门
+    Given 维护任务持有并发上限为 1 的维护门
+    When 两个维护任务同时进入且等待一个写入任务完成
+    Then 第二个维护任务等待、取消可释放许可、摄取不因维护门而阻塞且维护等待计入可观测指标
+
+  @STORE-PF06 @auto:xunit
+  Scenario: 冻结批次 COPY 与词项索引不占写门
+    Given 历史天表已冻结且写门被另一个目录切换持有
+    When 归档执行 COPY 与词项索引构建
+    Then 两项由克隆只读连接完成，冻结批次对象落盘且写门持有者不等待网络或聚合操作
 
   @STORE-ARCH3 @auto:xunit
   Scenario: 旧形态兼容（ColdDays=0 直接过期）

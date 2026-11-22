@@ -4,6 +4,18 @@
 
 Feature: 只读分析查询
 
+  @ANALYTICS-GO1 @auto:e2e
+  Scenario: 切换 Go 服务后继续使用已保存查询与图表
+    Given 用户保持原有网页和查询参数不变
+    When 查询实际表结构、执行参数化分析并保存后重新打开
+    Then 列式结果、分页、无损标识、审计信息及截断提示保持兼容
+
+  @ANALYTICS-GO2 @auto:e2e
+  Scenario: 原有图表计算在 Go 服务得到相同结果
+    Given 两种服务使用相同指标、链路和会话样本
+    When 执行网页原有的指标均值、差值、分位数和会话去重查询
+    Then 数值与原服务一致且引号参数不会改变查询结构
+
   @ANALYTICS-S225 @auto:xunit
   Scenario: 大结果在执行层受限而不是返回后截取
     Given 查询可能生成大量宽记录且实例内存有限

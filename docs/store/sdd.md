@@ -10,13 +10,15 @@
 
 - `DuckDbConnectionManager`：单例持有数据库实例；写门串行化 DDL、后台写及完整 Appender 事务（表门→建表→写门，门内不重入）；查询门覆盖通用查询、DSL、分析 SQL/搜索及告警计数的执行和结果读取，默认并发 1（配置钳位 1–32），独立连接不与后台写共享主连接。线程默认 2，显式 0 仍自动；查询门与写门独立，不保证单个重查询不会耗尽内存。
 - `TimeTables`：按天表名（`logs_/traces_/metrics_/iot_yyyymmdd`）与幂等建表 SQL（traces 建 trace_id ART 索引）。
-- `IngestBuffer`（有界 Channel）+ `IngestWriterService`（~200ms/5000 条聚合，按类型+天分组 Appender 写入）；分组时按（类型, UTC 日）缓存表名，避免为每条记录重复拼接表名字符串。
+- `IngestBuffer`（有界 Channel）+ `IngestWriterService`（低水位最多等待配置的 flush interval / 5000 条聚合，按类型+天分组 Appender 写入）；持久化等待者出现时立即刷写，MQ 每批仅最后一条带回执，批列表跨循环复用；分组时按（类型, UTC 日）缓存表名。
 - `LogStore / TraceStore / MetricStore / TelemetryStore`：跨天 UNION ALL 查询（全参数绑定），聚合分桶 `epoch_ms(ts) // step * step`。`LogStore` 的分页经 `LIMIT $limit OFFSET $offset` 下推到 SQL，调用方传入的 `LogQuery.Offset` 决定跳过条数，不在内存 Skip。
 - `IStoreInfo.CountTablesAsync`：把多张当日表合并为单条 `UNION ALL` count 查询，供 Monitor 总览批量取今日行数，减少查询门获取与连接克隆次数。
 - `SearchSqlExpander` 支持 `{{sessions}}` / `{{rum_events}}` → RUM 会话/事件内部天表，统一冷热解析、时间与命名参数绑定及查询跨度上限；Agent 提供结构化白名单查询，不开放任意 SQL，见 [Agents设计](../agents/sdd.md)。
 - `AnalyticsExecutor`：只读执行器（单条 SELECT/WITH、写关键字黑名单、行数上限、DateTime/BigInteger 归一化）。[告警计数](../alerts/sdd.md) 使用单域热数据、有界计数和专属连接原生中断，不触发冷层读取。
-- `RetentionService`：每小时 DROP 过期天表、清理超过指标热+冷总保留期的 rollup 桶（非正热保留为永久）并 CHECKPOINT。
-- `RollupService`：30秒周期，5m/1h窗口按桶分段，查询门→写门内先生成临时汇总，再单事务DELETE/INSERT替换；计算/取消失败不提前删除旧桶。移除高频删插写放大的两个复合ART索引，旧库启动幂等DROP索引，不删业务表。
+- `RetentionService`：每小时在源切换交接锁内仅处理天表目录切换与待过期冷台账的短暂隐藏；锁释放后删除 S3/本地冷对象。删除中 `ColdLedgerCache` 同时隐藏对象路径并保留“台账有条目”事实，避免新查询回退到域级通配；删除前失败恢复可见性并留待重试，主对象删除成功后立即提交台账删除，刷新失败时继续隐藏缺失对象。rollup 清理与 CHECKPOINT 也在交接锁外。
+- 维护门：`DuckDbConnectionManager` 提供并发 1 的维护准入，Rollup、归档、保留三类后台任务共享它；维护门与写门、查询门独立，维护等待不占用摄取表门或查询名额。维护等待直方图 `sdata_store_maintenance_lock_wait_seconds` 可观测，三门仍各自有界。
+- 归档维护：冻结天表的 `COPY`、词项索引构建和归档后 `CHECKPOINT` 使用克隆只读连接执行，不获取写门；台账、隐藏快照、DROP 与目录切换仍走短写事务和源切换交接锁。
+- `RollupService`：30秒周期，首轮按 C6 窗口回填；DuckDB `sdata_rollup_watermarks` 持久化每张 rollup 表的完成水位，后续及重启后只重算最近两个关闭桶以接纳迟到数据。最后桶替换与水位更新在同一事务提交。每桶在查询门下先生成连接私有临时汇总（先按 name/labels/bucket 聚合，再计算 labels_hash），仅 DELETE/INSERT 短事务占写门；计算/取消失败不提前删除旧桶。移除高频删插写放大的两个复合 ART 索引，旧库启动幂等 DROP 索引，不删业务表。
 - 消费采样的 `diagnostics` 保存有界阶段摘要，旧日表启动幂等补列；共享写入器故障通过缓冲发布安全分类和恢复时间，不返回原始异常。
 - 消费通知冷却与投递摘要属于SQLite元数据（`mq_notification_state`），启动由SchemaReconciler只增补表；不写入观测日志表，不随消费会话重建清零。通知预算及边界见 [Ingest设计](../ingest/sdd.md)。
 - 消费统计 `mq_consumption_yyyymmdd`：10 秒累计快照，经统一缓冲/Appender 写入，实例/规则/会话隔离；历史不得逐采样求和。沿用日志热保留天数，但不参与日志归档；查询仅经 Monitor 的管理员入口。
@@ -48,3 +50,4 @@
 - 指标名列表扫描最近 7 天冷热数据；更早指标仍可按名称与时间范围查询。
 - 存量（升级前）冷对象若无 `id` 列，`union_by_name` 单文件调用下不含 id 投影会报列缺失——升级部署需一次性重写过期前归档对象（预发布期暂无存量）。
 - 按表日期门冻结批次（内部 archive_GUID_yyyyMMdd），迟到数据写入新热表。网络 COPY 不占交接锁；发布时等待查询结束、强刷台账并隐藏热副本后清理。新对象位于 domain/batchId/shard.parquet，日志独有正文索引；重启依台账隐藏已发布副本，未发布批次继续查询并重试。
+- 性能专项（维护任务持锁范围、写入单线程与入口降本、查询通道分层、内存构成）见 [性能审计与方案](performance-audit.md)：PF04/PF07/PF08/PF09/PF12 已有部分实现；维护门、入口预解析背压、查询通道分层及内存实验仍待后续任务与决策。

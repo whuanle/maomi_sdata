@@ -1090,7 +1090,7 @@
     "buffer": "接入缓冲",
     "tables": "数据表",
     "todayRows": "今日写入",
-    "ingestHint": "接入 API Key 在 configs/system.yaml 的 Ingest:InitialApiKey 中配置",
+    "ingestHint": "接入 API Key 请在「API & Agents」中创建",
     "adminOnly": "设置管理仅超级管理员可见",
     "tabMembers": "成员",
     "tabS3": "冷存储 S3",

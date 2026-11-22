@@ -288,7 +288,7 @@ public class TableResolverTests
 
             Manager = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
             Manager.InitializeAsync().GetAwaiter().GetResult();
-            Writer = new IngestWriterService(new IngestBuffer(options), Manager, options, new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+            Writer = new IngestWriterService(new IngestBuffer(options), Manager, SystemSettingsProvider.FileOnly(options), new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
 
             var sqlitePath = Path.Combine(TempDirectory, "ledger.db");
             var dbOptions = new DbContextOptionsBuilder<DatabaseContext>().UseSqlite($"Data Source={sqlitePath}").Options;
@@ -297,7 +297,7 @@ public class TableResolverTests
             var scopeFactory = new SingleScopeFactory(Ledger);
             Settings = new SystemSettingsProvider(options, scopeFactory, new DefaultIdProvider(1), NullLogger<SystemSettingsProvider>.Instance);
             var objectStore = new CompositeObjectStore(new LocalObjectStore(), new S3ObjectStore(options, NullLogger<S3ObjectStore>.Instance));
-            var coldCache = new ColdCacheService(options, objectStore, NullLogger<ColdCacheService>.Instance);
+            var coldCache = new ColdCacheService(Settings, objectStore, NullLogger<ColdCacheService>.Instance);
             var ledgerCache = new ColdLedgerCache(scopeFactory, NullLogger<ColdLedgerCache>.Instance);
             Resolver = new TableResolver(Manager, options, Settings, ledgerCache, coldCache, resolverLogger ?? NullLogger<TableResolver>.Instance);
         }

@@ -1090,7 +1090,7 @@
     "buffer": "Ingest buffer",
     "tables": "Tables",
     "todayRows": "Today rows",
-    "ingestHint": "Ingest API key is configured in configs/system.yaml (Ingest:InitialApiKey)",
+    "ingestHint": "Create ingest API keys in API & Agents",
     "adminOnly": "Settings management is visible to super admins only",
     "tabMembers": "Members",
     "tabS3": "Cold Storage S3",

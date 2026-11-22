@@ -69,6 +69,7 @@ public class DeviceCredentialTests : IDisposable
     {
         public MqttAuthOptions GetMqttAuth() => new();
         public DuckDbSettings GetDuckDb() => new();
+        public RuntimeSettings GetRuntime() => new();
         public S3Options GetS3() => new();
         public RetentionPlanOptions GetRetention() => new();
         public CompressionOptions GetCompression() => new();

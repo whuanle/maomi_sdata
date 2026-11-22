@@ -51,7 +51,7 @@ namespace SData.Store.Tests;
         new DuckDbSchemaBootstrapper(_connectionManager, NullLogger<DuckDbSchemaBootstrapper>.Instance).ApplyAsync().GetAwaiter().GetResult();
 
         _buffer = new IngestBuffer(_systemOptions);
-        _writer = new IngestWriterService(_buffer, _connectionManager, _systemOptions, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+        _writer = new IngestWriterService(_buffer, _connectionManager, SystemSettingsProvider.FileOnly(_systemOptions), new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
 
         // 统一查询管线依赖（内存台账镜像：本测试无台账行，冷层恒空，行为与旧版一致）
         var sqlitePath = Path.Combine(_tempDirectory, "ledger.db");
@@ -61,11 +61,11 @@ namespace SData.Store.Tests;
         var scopeFactory = new SingleScopeFactory(ledger);
         var settings = new SystemSettingsProvider(_systemOptions, scopeFactory, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<SystemSettingsProvider>.Instance);
         var objectStore = new CompositeObjectStore(new LocalObjectStore(), new S3ObjectStore(_systemOptions, NullLogger<S3ObjectStore>.Instance));
-        var coldCache = new ColdCacheService(_systemOptions, objectStore, NullLogger<ColdCacheService>.Instance);
+        var coldCache = new ColdCacheService(settings, objectStore, NullLogger<ColdCacheService>.Instance);
         var ledgerCache = new ColdLedgerCache(scopeFactory, NullLogger<ColdLedgerCache>.Instance);
         Resolver = new TableResolver(_connectionManager, _systemOptions, settings, ledgerCache, coldCache, NullLogger<TableResolver>.Instance);
         _logStore = new LogStore(_connectionManager, _systemOptions, Resolver);
-        _traceStore = new TraceStore(_connectionManager, _systemOptions);
+        _traceStore = new TraceStore(_connectionManager, settings);
         _metricStore = new MetricStore(_connectionManager, _systemOptions);
         _telemetryStore = new TelemetryStore(_connectionManager, _systemOptions);
     }
@@ -253,7 +253,7 @@ namespace SData.Store.Tests;
     [Fact]
     public async Task Analytics_RejectsWrite_AllowsSelect()
     {
-        var executor = new AnalyticsExecutor(_connectionManager, _systemOptions, Resolver, NullLogger<AnalyticsExecutor>.Instance);
+        var executor = new AnalyticsExecutor(_connectionManager, _systemOptions, SystemSettingsProvider.FileOnly(_systemOptions), Resolver, NullLogger<AnalyticsExecutor>.Instance);
 
         var result = await executor.ExecuteAsync("SELECT 1 AS one", 10);
         Assert.Equal("one", Assert.Single(result.Columns));
@@ -270,8 +270,8 @@ namespace SData.Store.Tests;
         _buffer.TryEnqueueSpan(new SpanRecord { Timestamp = now, Service = "agent-svc", TraceId = "agent-trace", SpanId = "span", Name = "operation", Status = "error", DurationUs = 1000 });
         _buffer.TryEnqueueMetric(new MetricPointRecord { Timestamp = now, Name = "agent.cpu", Value = 42 });
         await DrainAsync();
-        var executor = new AnalyticsExecutor(_connectionManager, _systemOptions, Resolver, NullLogger<AnalyticsExecutor>.Instance);
-        var queries = new SData.Agents.AgentQueries(executor, NullLogger<SData.Agents.AgentQueries>.Instance);
+        var executor = new AnalyticsExecutor(_connectionManager, _systemOptions, SystemSettingsProvider.FileOnly(_systemOptions), Resolver, NullLogger<AnalyticsExecutor>.Instance);
+        var queries = new SData.Agents.AgentQueries(executor, NullLogger<SData.Agents.AgentQueries>.Instance, SystemSettingsProvider.FileOnly(_systemOptions));
         foreach (var tool in new[] { "list_services", "search_logs", "search_traces", "get_trace", "list_metric_names", "query_metric_series", "summarize_errors" })
         {
             var result = await queries.ExecuteAsync(tool, new SData.Agents.AgentQuery { From = now.AddMinutes(-1), To = now.AddMinutes(1), TraceId = "agent-trace", Metric = "agent.cpu" }, default);

@@ -4,6 +4,48 @@
 
 Feature: 真实用户监控（RUM）接入
 
+  @RUM-S12 @manual
+  Scenario: Go 服务保留项目权限与严格来源保护
+    Given 已有项目保存采样率和允许站点
+    When 管理员维护项目且其他用户尝试写入
+    Then 管理员修改生效、其他用户被拒绝且仅允许站点可采集
+
+  @RUM-S13 @manual
+  Scenario: Go 会话数据按时间和项目隔离
+    Given 两个项目存在同名会话且活动跨越午夜
+    When 查询性能、会话、事件、回放、热力和站点地图
+    Then 仅返回目标项目与所选时间范围内的真实数据
+
+  @RUM-S14 @manual
+  Scenario: Go 接入缓冲背压与空窗口
+    Given 接入内存预算不足且查询窗口内没有活动
+    When 采集器上报并查询该窗口
+    Then 上报明确提示背压且查询返回空结果而非模拟数据
+
+  @RUM-S15 @manual
+  Scenario: Go 全局允许站点只收紧项目范围
+    Given 项目配置允许站点且服务设置了全局允许站点
+    When 站点获取采样配置、准备跨域请求或上报活动
+    Then 只有同时满足项目与全局范围的站点可采集且其他请求不入队
+
+  @RUM-S16 @manual
+  Scenario: Go 探针按真实构建产物反馈
+    Given 服务部署了真实探针构建产物
+    When 客户端加载探针
+    Then 探针按原内容返回且缺失或损坏产物不能伪装成功
+
+  @RUM-S17 @manual
+  Scenario: Go 实时点击采集与认证订阅
+    Given 探针来源获准且管理端已登录并订阅项目
+    When 探针直接上报或通过批量通道上报点击
+    Then 订阅者收到同项目点击且每次上报只写入一条记录
+
+  @RUM-S18 @manual
+  Scenario: Go 实时权限重检、背压与退出
+    Given 实时连接已经建立
+    When 项目被删除、订阅退出、接入缓冲耗尽或服务关闭
+    Then 删除项目的点击被拒绝、退出后不再推送、缓冲耗尽提示回退且关闭后连接全部释放
+
   @RUM-S1 @auto:vitest
   Scenario: 会话工作台检索与返回
     Given 已选择项目与时间范围

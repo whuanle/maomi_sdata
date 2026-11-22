@@ -64,8 +64,12 @@ export function OverviewPage() {
   }, [refresh]);
 
   const unknown = t('overview.unknown');
-  const total = overview ? Object.values(overview.todayRows).reduce((sum, count) => sum + count, 0) : unknown;
-  const consumers = overview?.mqConsumers ?? [];
+  const todayRows = overview?.todayRows && typeof overview.todayRows === 'object' ? overview.todayRows : {};
+  const tableCounts = overview?.tableCounts && typeof overview.tableCounts === 'object' ? overview.tableCounts : {};
+  const channels = Array.isArray(overview?.channels) ? overview.channels : [];
+  const storage = overview?.storage && typeof overview.storage === 'object' ? overview.storage : undefined;
+  const total = overview ? Object.values(todayRows).reduce((sum, count) => sum + (typeof count === 'number' && Number.isFinite(count) ? count : 0), 0) : unknown;
+  const consumers = Array.isArray(overview?.mqConsumers) ? overview.mqConsumers : [];
   const mqStates = ['starting', 'retrying', 'consuming', 'idle', 'persisting', 'error', 'stopped', 'disabled', 'unknown'];
   const stateLabel = (state: string) => t(`overview.mqState.${mqStates.includes(state) ? state : 'unknown'}`);
 
@@ -99,10 +103,10 @@ export function OverviewPage() {
           <InfoRow label={t('overview.gcHeap')} value={status ? formatBytes(status.gcHeapBytes) : unknown} />
         </Panel>
         <Panel title={t('overview.storage')}>
-          <InfoRow label={t('overview.hotDbBytes')} value={overview ? formatBytes(overview.storage.hotDbBytes) : unknown} />
-          <InfoRow label={t('overview.hotDbPath')} value={overview?.storage.hotDbPath ?? unknown} />
-          <InfoRow label={t('overview.duckDbMemory')} value={overview?.storage.memoryLimit ?? unknown} />
-          <InfoRow label={t('overview.cold')} value={overview?.s3Resources ? t(`overview.resourceState.${overview.s3Resources.state}`, { defaultValue: unknown }) : overview ? t(overview.storage.coldEnabled ? 'overview.s3Configured' : 'overview.s3NotConfigured') : unknown} />
+          <InfoRow label={t('overview.hotDbBytes')} value={storage ? formatBytes(storage.hotDbBytes) : unknown} />
+          <InfoRow label={t('overview.hotDbPath')} value={storage?.hotDbPath ?? unknown} />
+          <InfoRow label={t('overview.duckDbMemory')} value={storage?.memoryLimit ?? unknown} />
+          <InfoRow label={t('overview.cold')} value={overview?.s3Resources ? t(`overview.resourceState.${overview.s3Resources.state}`, { defaultValue: unknown }) : storage ? t(storage.coldEnabled ? 'overview.s3Configured' : 'overview.s3NotConfigured') : unknown} />
           <p className="mt-3 text-xs text-subtle">{t('overview.storageHint')}</p>
         </Panel>
       </div>
@@ -118,12 +122,12 @@ export function OverviewPage() {
                 <th key={key} className={cn('px-2 py-2 font-medium', index === 0 ? 'text-left' : 'text-right')}>{t(`overview.${key}`)}</th>)}
             </tr></thead>
             <tbody>
-              {Object.entries(overview?.todayRows ?? {}).map(([name, count]) => {
-                const channel = overview?.channels.find((item) => item.name === name);
+              {Object.entries(todayRows).map(([name, count]) => {
+                const channel = channels.find((item) => item.name === name);
                 return <tr key={name} className="border-t border-border/60">
                   <td className="px-2 py-2 font-mono">{name}</td>
                   <td className="px-2 py-2 text-right font-mono">{count}</td>
-                  <td className="px-2 py-2 text-right font-mono">{overview?.tableCounts[name] ?? unknown}</td>
+                  <td className="px-2 py-2 text-right font-mono">{tableCounts[name] ?? unknown}</td>
                   <td className="px-2 py-2 text-right font-mono">{channel?.processed ?? unknown}</td>
                   <td className={cn('px-2 py-2 text-right font-mono', channel && channel.dropped > 0 && 'text-error')}>{channel?.dropped ?? unknown}</td>
                   <td className={cn('px-2 py-2 text-right', channel?.healthy ? 'text-success' : 'text-warning')}>{channel ? t(channel.healthy ? 'overview.healthy' : 'overview.degraded') : unknown}</td>

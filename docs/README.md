@@ -15,6 +15,7 @@
 | 模块 | 文档 | 说明 |
 |---|---|---|
 | store（DuckDB 引擎） | [store/](store/) | 连接管理/按天分表/缓冲落库/保留策略 |
+| store · 性能专项 | [performance-audit](store/performance-audit.md) | 写入/查询/维护任务的性能审计与优化方案（PF 任务组，立项未实施） |
 | ingest（数据接入） | [ingest/](ingest/) | OTLP/HTTP(JSON) + 简单 JSON 批量 + API Key |
 | logs | [logs/](logs/) | 日志查询 |
 | agents | [agents/](agents/) | API & Agents 双用途凭据、只读 MCP 与查询预算 |

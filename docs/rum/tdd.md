@@ -4,6 +4,14 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @RUM-S15 | `go/cmd/sdata/rum_policy_test.go::TestRumGlobalOriginCapAppliesToEveryPublicDataEndpoint`；`go/internal/config/rum_test.go` | 2026-11-22：通过；三个公开数据通道、全局与项目交集、非法上限拒绝、空上限及配置覆盖 |
+| @RUM-S16 | `go/cmd/sdata/rum_policy_test.go::TestRumProbeServesOnlyRealArtifact` | 2026-11-22：通过；真实文件内容、缺失/非文件 503 |
+| @RUM-S17 / @RUM-S18 | `go/internal/rum/live_test.go` 五个真实 WebSocket 测试 | 2026-11-22：连续 10 轮通过（3.170s）；协商/握手、JWT/来源、直接与 beacon 推送、单次入库、删除重检、退订、false 背压、队列上限、分段消息、ping/close、context 和关闭释放 |
+| Go 并发验证限制 | `go test -race -tags duckdb_use_lib ./internal/rum -run RumLive` | 2026-11-22：未运行成功，现有 Zig 工具链链接缺少 synchronization 库；未安装依赖，普通真实套接字测试通过，不宣称 race 检查通过 |
+| @RUM-S12 | `go/cmd/sdata/rum_handlers_test.go::TestRumProjectsOriginAndAdminContract`；`go/internal/rum/projects_test.go` | 2026-11-22：通过；覆盖管理员权限、来源规范化、Referer 回退、预检、采样值、键不可变和软删除；浏览器未验收 |
+| @RUM-S13 | `go/cmd/sdata/rum_handlers_test.go::TestRumBeaconAndQueriesUseDuckDB` | 2026-11-22：gzip → 异步 DuckDB → 七类查询通过；跨日、同名跨项目、p75、分页、参数注入和 SQLite 无时序写入已验证 |
+| @RUM-S14 | `go/cmd/sdata/rum_handlers_test.go::TestRumBackpressureAndEmptyQueryContract`；`go/internal/store/rum_test.go` | 2026-11-22：通过；行数/字节预算、429、空窗口、gzip 错误、队列快照和关闭排空；不等同于实时 Hub 验收 |
+| Go 验证边界 | 五个 HTTP 测试、五个 SignalR 测试、两个存储、两个元数据和一个配置测试 | 2026-11-22：四包定向测试通过（HTTP 包 6.449s）；未执行本轮真实浏览器或断网重连验收 |
 | @RUM-S1 | `ui/src/pages/rum/__tests__/RumPage.test.tsx` | 通过（2026-11-19，8/8；全量 UI 443/443） |
 | @RUM-S6 / @RUM-S7 | `ui/src/pages/rum/__tests__/RumPage.test.tsx`：无项目直接创建、自动选中刷新、已有项目入口及 write/readonly 权限 | 通过（2026-11-19，会话页 12/12；typecheck/lint 通过）；全量 UI 520/521，SettingsPage 归档策略断言期望 hotDays=1、实际 30，本次未修改该模块；未执行本次浏览器验收 |
 | @RUM-S8 | ClientSessionsPage 工具栏及错误/回放/排序筛选紧凑并排；会话页回归 | 会话页 14/14、typecheck 通过（2026-11-19）；本次不同窗口宽度的浏览器布局验收未执行 |

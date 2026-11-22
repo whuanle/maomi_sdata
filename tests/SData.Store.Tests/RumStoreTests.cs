@@ -4,6 +4,7 @@ using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Rum;
 using SData.Rum.Services;
+using SData.Settings.Services;
 using SData.Store;
 using SData.Store.Core;
 
@@ -40,7 +41,7 @@ namespace SData.Store.Tests;
         _connectionManager.InitializeAsync().GetAwaiter().GetResult();
 
         _buffer = new IngestBuffer(_systemOptions);
-        _writer = new IngestWriterService(_buffer, _connectionManager, _systemOptions, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+        _writer = new IngestWriterService(_buffer, _connectionManager, SystemSettingsProvider.FileOnly(_systemOptions), new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
         _beaconService = new RumBeaconService(_buffer, originPolicy: new RumTestOriginPolicy());
         _rumStore = new RumStore(_connectionManager);
     }

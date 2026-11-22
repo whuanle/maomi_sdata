@@ -2,6 +2,7 @@ using global::Xunit;
 using Microsoft.Extensions.Logging.Abstractions;
 using SData.Infra;
 using SData.Infra.Configuration;
+using SData.Settings.Services;
 using SData.Store;
 using SData.Store.Core;
 using SData.Store.Models;
@@ -49,6 +50,43 @@ public class RollupTests
         Assert.Equal(sum1, sum2);
         Assert.Equal(2L, count1);
         Assert.Equal(count1, count2);
+
+        var histograms = harness.Manager.Snapshot.Histograms.ToDictionary(item => item.Name, StringComparer.Ordinal);
+        foreach (var name in new[]
+        {
+            "sdata_store_write_lock_wait_seconds",
+            "sdata_store_query_lock_wait_seconds",
+            "sdata_store_source_lock_wait_seconds",
+            "sdata_store_table_lock_wait_seconds",
+            "sdata_store_maintenance_lock_wait_seconds",
+            "sdata_ingest_append_seconds",
+            "sdata_ingest_commit_seconds",
+        })
+        {
+            var histogram = histograms[name];
+            Assert.True(histogram.Count > 0, name);
+            Assert.True(histogram.SumSeconds >= 0, name);
+            Assert.Equal(histogram.Count, histogram.BucketCounts[^1]);
+        }
+
+        var counters = harness.Manager.Snapshot.Counters.ToDictionary(item => item.Name, StringComparer.Ordinal);
+        Assert.True(counters["sdata_rollup_rows_total"].Value > 0);
+        Assert.True(histograms["sdata_rollup_duration_seconds"].Count > 0);
+    }
+
+    [Fact]
+    public async Task SourceSwitchLease_RecordsHoldDuration()
+    {
+        using var harness = new RollupHarness();
+        using (await harness.Manager.ChangeSourcesAsync(harness.Token))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(20), harness.Token);
+        }
+
+        var histogram = harness.Manager.Snapshot.Histograms.Single(item => item.Name == "sdata_store_source_switch_lock_hold_seconds");
+        Assert.Equal(1, histogram.Count);
+        Assert.True(histogram.SumSeconds >= 0.015);
+        Assert.Equal(histogram.Count, histogram.BucketCounts[^1]);
     }
 
     /// <summary>5m 表同样回填且粒度更细.</summary>
@@ -74,6 +112,159 @@ public class RollupTests
                 return reader.GetInt64(0);
             }, harness.Token);
         Assert.True(count >= 1, "5m rollup 表应至少有 1 行");
+    }
+
+    [Fact]
+    public async Task Backfill_RecomputesOnlyLateWindowBuckets()
+    {
+        using var harness = new RollupHarness();
+        var now = DateTimeOffset.UtcNow;
+        var floor5m = new DateTimeOffset(now.UtcDateTime.Ticks - (now.UtcDateTime.Ticks % TimeSpan.FromMinutes(5).Ticks), TimeSpan.Zero);
+        var lateBucketTime = floor5m.AddMinutes(-4);
+        var olderBucketTime = floor5m.AddMinutes(-14);
+        await harness.Writer.FlushAsync(
+        [
+            new(IngestKind.Metric, new MetricPointRecord { Name = "late", Timestamp = lateBucketTime, Value = 1 }),
+            new(IngestKind.Metric, new MetricPointRecord { Name = "older", Timestamp = olderBucketTime, Value = 10 }),
+        ], harness.Token);
+        await harness.Service.BackfillAsync(harness.Token);
+
+        await harness.Writer.FlushAsync(
+        [
+            new(IngestKind.Metric, new MetricPointRecord { Name = "late", Timestamp = lateBucketTime, Value = 2 }),
+            new(IngestKind.Metric, new MetricPointRecord { Name = "older", Timestamp = olderBucketTime, Value = 20 }),
+        ], harness.Token);
+        var path = Path.Combine(harness.TempDirectory, "rollup-test.duckdb");
+        await harness.Manager.DisposeAsync();
+        var options = new SystemOptions();
+        options.DuckDb.Path = path;
+        await using var restartedManager = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
+        await restartedManager.InitializeAsync();
+        await new DuckDbSchemaBootstrapper(restartedManager, NullLogger<DuckDbSchemaBootstrapper>.Instance).ApplyAsync();
+        using var restarted = new RollupService(restartedManager, NullLogger<RollupService>.Instance);
+        await restarted.BackfillAsync(harness.Token);
+
+        var sums = await restartedManager.QueryAsync(
+            $"SELECT name, sum(\"sum\") FROM {TimeTables.Rollup5mTable} WHERE name IN ('late', 'older') GROUP BY name",
+            null,
+            async reader =>
+            {
+                var result = new Dictionary<string, double>(StringComparer.Ordinal);
+                while (await reader.ReadAsync(harness.Token))
+                {
+                    result.Add(reader.GetString(0), reader.GetDouble(1));
+                }
+
+                return result;
+            }, harness.Token);
+
+        Assert.Equal(3, sums["late"]);
+        Assert.Equal(10, sums["older"]);
+    }
+
+    [Fact]
+    public async Task Backfill_WatermarkFailure_RollsBackAndRecoversAfterRestart()
+    {
+        using var harness = new RollupHarness();
+        var now = DateTimeOffset.UtcNow;
+        var floor5m = new DateTimeOffset(now.UtcDateTime.Ticks - (now.UtcDateTime.Ticks % TimeSpan.FromMinutes(5).Ticks), TimeSpan.Zero);
+        var time = floor5m.AddMinutes(-4);
+        await harness.Writer.FlushAsync([new(IngestKind.Metric, new MetricPointRecord { Name = "atomic-watermark", Timestamp = time, Value = 7 })], harness.Token);
+        await harness.Service.BackfillAsync(harness.Token);
+        await harness.Writer.FlushAsync([new(IngestKind.Metric, new MetricPointRecord { Name = "atomic-watermark", Timestamp = time, Value = 9 })], harness.Token);
+
+        await harness.Manager.ExecuteWriteAsync("DROP TABLE sdata_rollup_watermarks");
+        await harness.Manager.ExecuteWriteAsync("""
+            CREATE TABLE sdata_rollup_watermarks (
+                table_name VARCHAR PRIMARY KEY,
+                watermark_ts TIMESTAMP NOT NULL CHECK (watermark_ts < TIMESTAMP '2000-01-01 00:00:00')
+            )
+            """);
+        var failedWatermarkParameters = new DuckDB.NET.Data.DuckDBParameter[]
+        {
+            new("table_name", TimeTables.Rollup5mTable),
+            new("watermark_ts", new DateTime(1999, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
+        };
+        await harness.Manager.ExecuteWriteAsync("INSERT INTO sdata_rollup_watermarks VALUES ($table_name, $watermark_ts)", failedWatermarkParameters);
+
+        using (var failingService = new RollupService(harness.Manager, NullLogger<RollupService>.Instance))
+        {
+            await Assert.ThrowsAsync<DuckDB.NET.Data.DuckDBException>(() => failingService.BackfillAsync(harness.Token));
+        }
+
+        var rolledBackSum = await harness.Manager.QueryAsync(
+            $"SELECT coalesce(sum(\"sum\"), 0) FROM {TimeTables.Rollup5mTable} WHERE name = $name",
+            [new DuckDB.NET.Data.DuckDBParameter("name", "atomic-watermark")],
+            async reader =>
+            {
+                await reader.ReadAsync(harness.Token);
+                return reader.GetDouble(0);
+            }, harness.Token);
+        Assert.Equal(7, rolledBackSum);
+
+        var path = Path.Combine(harness.TempDirectory, "rollup-test.duckdb");
+        await harness.Manager.DisposeAsync();
+        var options = new SystemOptions();
+        options.DuckDb.Path = path;
+        await using var restartedManager = new DuckDbConnectionManager(options, NullLogger<DuckDbConnectionManager>.Instance);
+        await restartedManager.InitializeAsync();
+        await new DuckDbSchemaBootstrapper(restartedManager, NullLogger<DuckDbSchemaBootstrapper>.Instance).ApplyAsync();
+
+        var persistedWatermark = await restartedManager.QueryAsync(
+            "SELECT watermark_ts FROM sdata_rollup_watermarks WHERE table_name = $table_name",
+            [new DuckDB.NET.Data.DuckDBParameter("table_name", TimeTables.Rollup5mTable)],
+            async reader =>
+            {
+                await reader.ReadAsync(harness.Token);
+                return reader.GetDateTime(0);
+            }, harness.Token);
+        Assert.Equal(new DateTime(1999, 1, 1, 0, 0, 0, DateTimeKind.Utc), persistedWatermark);
+        var persistedSum = await restartedManager.QueryAsync(
+            $"SELECT coalesce(sum(\"sum\"), 0) FROM {TimeTables.Rollup5mTable} WHERE name = $name",
+            [new DuckDB.NET.Data.DuckDBParameter("name", "atomic-watermark")],
+            async reader =>
+            {
+                await reader.ReadAsync(harness.Token);
+                return reader.GetDouble(0);
+            }, harness.Token);
+        Assert.Equal(7, persistedSum);
+
+        await restartedManager.ExecuteWriteAsync("DROP TABLE sdata_rollup_watermarks");
+        await restartedManager.ExecuteWriteAsync("""
+            CREATE TABLE sdata_rollup_watermarks (
+                table_name VARCHAR PRIMARY KEY,
+                watermark_ts TIMESTAMP NOT NULL
+            )
+            """);
+        var retryWatermarkParameters = new DuckDB.NET.Data.DuckDBParameter[]
+        {
+            new("table_name", TimeTables.Rollup5mTable),
+            new("watermark_ts", persistedWatermark),
+        };
+        await restartedManager.ExecuteWriteAsync("INSERT INTO sdata_rollup_watermarks VALUES ($table_name, $watermark_ts)", retryWatermarkParameters);
+        using (var recoveryService = new RollupService(restartedManager, NullLogger<RollupService>.Instance))
+        {
+            await recoveryService.BackfillAsync(harness.Token);
+        }
+
+        var recoveredSum = await restartedManager.QueryAsync(
+            $"SELECT coalesce(sum(\"sum\"), 0) FROM {TimeTables.Rollup5mTable} WHERE name = $name",
+            [new DuckDB.NET.Data.DuckDBParameter("name", "atomic-watermark")],
+            async reader =>
+            {
+                await reader.ReadAsync(harness.Token);
+                return reader.GetDouble(0);
+            }, harness.Token);
+        Assert.Equal(16, recoveredSum);
+        var recoveredWatermark = await restartedManager.QueryAsync(
+            "SELECT watermark_ts FROM sdata_rollup_watermarks WHERE table_name = $table_name",
+            [new DuckDB.NET.Data.DuckDBParameter("table_name", TimeTables.Rollup5mTable)],
+            async reader =>
+            {
+                await reader.ReadAsync(harness.Token);
+                return reader.GetDateTime(0);
+            }, harness.Token);
+        Assert.True(recoveredWatermark > persistedWatermark);
     }
 
     /// <summary>跨度 > 24h 且 avg：走 rollup（单桶点，值 = sum/count）.</summary>
@@ -191,12 +382,15 @@ public class RollupTests
     public async Task Backfill_InsertFailure_RollsBackDeletedBucket()
     {
         using var harness = new RollupHarness();
-        var time = RollupHarness.Closed5mBucketTime();
+        var now = DateTimeOffset.UtcNow;
+        var time = new DateTimeOffset(now.UtcDateTime.Ticks - (now.UtcDateTime.Ticks % TimeSpan.FromMinutes(5).Ticks), TimeSpan.Zero).AddMinutes(-4);
         await harness.Writer.FlushAsync([new(IngestKind.Metric, new MetricPointRecord { Name = "atomic", Timestamp = time, Value = 7 })], harness.Token);
         await harness.Service.BackfillAsync(harness.Token);
         await harness.Manager.ExecuteWriteAsync($"CREATE UNIQUE INDEX rollback_probe ON {TimeTables.Rollup5mTable}(name, labels_hash, bucket_ts)");
         await harness.Writer.FlushAsync([new(IngestKind.Metric, new MetricPointRecord { Name = "atomic", Timestamp = time, LabelsJson = string.Empty, Value = 9 })], harness.Token);
-        await Assert.ThrowsAsync<DuckDB.NET.Data.DuckDBException>(() => harness.Service.BackfillAsync(harness.Token));
+        // 同一实例内重算失败也必须回滚已删除的桶及水位更新。
+        var restarted = new RollupService(harness.Manager, Microsoft.Extensions.Logging.Abstractions.NullLogger<RollupService>.Instance);
+        await Assert.ThrowsAsync<DuckDB.NET.Data.DuckDBException>(() => restarted.BackfillAsync(harness.Token));
         var value = await harness.Manager.QueryAsync($"SELECT sum(\"sum\") FROM {TimeTables.Rollup5mTable} WHERE name = 'atomic'", null,
             async reader => { await reader.ReadAsync(); return reader.GetDouble(0); });
         Assert.Equal(7, value);
@@ -214,6 +408,8 @@ public class RollupTests
         }
         await RetentionService.PruneRollupsAsync(harness.Manager, today, 0, harness.Token);
         await RetentionService.PruneRollupsAsync(harness.Manager, today, 7, harness.Token);
+        var deletedRows = harness.Manager.Snapshot.Counters.Single(item => item.Name == "sdata_retention_rollup_rows_deleted_total");
+        Assert.Equal(2, deletedRows.Value);
         foreach (var table in new[] { TimeTables.Rollup5mTable, TimeTables.Rollup1hTable })
         {
             Assert.Equal(1, await harness.Manager.QueryAsync($"SELECT count(*) FROM {table} WHERE name = 'boundary'", null, async reader => { await reader.ReadAsync(); return reader.GetInt64(0); }));
@@ -290,7 +486,7 @@ public class RollupTests
             Manager.InitializeAsync().GetAwaiter().GetResult();
             Bootstrapper = new DuckDbSchemaBootstrapper(Manager, NullLogger<DuckDbSchemaBootstrapper>.Instance);
             Bootstrapper.ApplyAsync().GetAwaiter().GetResult();
-            Writer = new IngestWriterService(new IngestBuffer(options), Manager, options, new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+            Writer = new IngestWriterService(new IngestBuffer(options), Manager, SystemSettingsProvider.FileOnly(options), new SData.Infra.Services.DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
             Service = new RollupService(Manager, NullLogger<RollupService>.Instance);
             MetricStore = new MetricStore(Manager, options);
         }

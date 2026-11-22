@@ -2,6 +2,8 @@
 
 > 关联：[sdd](sdd.md) · [bdd](bdd.md) · [tdd](tdd.md)
 
+- Go 验收：`go test -tags duckdb_use_lib ./cmd/sdata ./internal/query -run 'TestDashboard|TestCustomPanel|TestPrometheus'`。配置必须使用原协议的字符串 `configJson` 与 `kind=view`，不再接受旧 Go 占位实现的对象配置。冲突 409 需重新加载后保存；查询错误查看面板 `error` 与服务日志。
+
 - 路由定位：`?edit=1` 为整盘编辑；`panels/new?kind=custom|explorer|group` 为新建；`panels/:panelId/edit` 编辑普通、自定义或分组成员，`preview` 为登录可用的只读预览。`tab`、`tab.<groupId>`、`node`、`settings=display` 保存界面位置，不保存查询内容。刷新恢复位置与已保存配置，未保存内容仍需整盘保存；离开编辑有确认。分组选择框须使用label，禁止把children透传原生input。
 - 自定义组件：画布编辑态点击“自定义组件”进入独立设计页，默认选择来源、聚合与Lucene筛选，按时间桶/分类组织数据并添加引导式表达式；高级SQL仍可手工映射字段。运行成功后应用到草稿，最后整盘保存；查询变更必须重新运行。表达式仅引用前序节点，时间序列按完整键匹配，不自动补零；重复键需先在SQL聚合。节点结果可检查参数、字段、耗时与截断。未知版本不可覆盖；取消不修改原组件。
 - 自定义组件验收：先修改画布名称/布局，再设计A/B及比率表达式，应用后确认原草稿保留；保存、刷新及再次编辑核对查询和展示；回归readonly、409、亮暗与窄屏。自动测试不替代登录后浏览器验收。

@@ -1,7 +1,7 @@
 # ============================================
 # Filebeat 直推 SData 的 _bulk 写入兼容端点（T120/T122）
 # 前置条件：
-#   1. SData 开启 9200 别名端口：configs/system.yaml 中
+#   1. SData 开启 9200 别名端口（appsettings.json 的 SData:Listeners）：
 #      SData:Listeners: [ { Port: 9200, Protocol: http } ]（由 T112 的通用附加监听实现）
 #   2. SData 接入鉴权：SData:Ingest:InitialApiKey（或已创建的接入 Key）作为 Basic password
 #      Filebeat ES 输出固定发 Basic auth；SData 兼容 X-Api-Key / Bearer / Basic(password=Key)

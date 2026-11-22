@@ -6,12 +6,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="$(RepoRoot)\src\store\SData.Store.Core\SData.Store.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)/src/alerts/SData.Alerts.Core/SData.Alerts.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)/src/agents/SData.Agents.Core/SData.Agents.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)/src/ingest/SData.Ingest.Core/SData.Ingest.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\settings\SData.Settings.Core\SData.Settings.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\rum\SData.Rum.Core\SData.Rum.Core.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\SData\SData.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

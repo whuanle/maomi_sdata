@@ -4,6 +4,9 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @SET-S49/S50/S54 Go 设置契约、脱敏、内存生效、复用与安全诊断 | `go/internal/settings/settings_test.go`；`go/cmd/sdata/settings_handlers_test.go` | 2026-11-22：`go test .\internal\settings` 16个顶层测试通过；真实 DuckDB 的 `go test -tags duckdb_use_lib .\cmd\sdata -run '^TestSettings'` 5/5通过，含共享实例、告警渠道投影与无秘密错误日志；先前同期编译阻塞已解除。未部署，不代表未接入的运行消费者已生效 |
+| @SET-S51/S53/S55 Go 凭据、通知版本控制与认证边界 | `settings_test.go`；`notification_transport_test.go`；`settings_handlers_test.go` | 2026-11-22：用途隔离、轮换撤销、审计身份、秘密保留、并发旧版本冲突、11种协议业务码、目标白名单及回环阻断通过；MQTT密码1024/1025个UTF-16码元及none模式定向回归通过。仅假协议响应和本地阻断测试，无真实第三方外发 |
+| @SET-S52 Go 消费配置和解析预览 | `TestMQPersistenceMaskingAndValidation`、`TestParsePreviewMappingsErrorsAndBounds` | 2026-11-22：主键持久化、掩码往返、无效渠道/重名拒绝、JSON/regex/csv/logfmt映射、失败标记和50条上限通过；未连接真实 MQ，未支持格式明确501 |
 | @SET-S48 旧后端缺失内存配置不崩溃 | `SettingsPage.test.tsx` 缺字段/null、切页可用、重试恢复 | 2026-11-20：定向31/31、前端全量785/785、typecheck/lint通过；未重启运行后端或做浏览器复验 |
 | @SET-S45/S46/S47 内存调整、失败恢复与权限 | `SettingsTests.DuckDb*`、`DuckDbMemorySettingsTests`、`StoreInitializerTests`、`DuckDbSettingsIntegrationTests`、设置页/API测试 | 2026-11-20：Store全量293/293、末轮设置专项40/40（含恢复失败）、前端全量783/783、类型检查/lint通过；隔离真实HTTP测试1/1通过（401/403/非法容量/保存/查询/重启恢复）。默认构建被运行中SData锁DLL阻塞，改独立输出验证，未停止现有服务；未部署或浏览器验收 |
 | @SET-S43/S44 查看及重置 Key | ApiAgentTests、ApiKeySchemaTests、ApiKeyManagementIntegrationTests、ApiAgentsPanel.test.tsx | 2026-11-20：Store252/252、补列2/2、隔离JWT权限/无缓存1/1、前端定向24/24、类型检查和独立构建通过；前端全量730/731（日志消费页旧文案断言失败），Ingest整组被MqRuntimeTests缺FallbackState编译阻塞。未部署、未重置真实Key、浏览器未复验 |

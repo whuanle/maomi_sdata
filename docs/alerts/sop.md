@@ -8,13 +8,14 @@
 4. 修改搜索不会更新规则；编辑告警时显式选择使用当前搜索条件。
 
 ## 配置
-`SData:Alerts`（修改后重启）：Enabled=true、MaxEnabledRules=50、QueryTimeoutSeconds=5、BudgetSecondsPerMinute=15、MaxPendingDeliveries=1000。
+`SData:Alerts`（`appsettings.json` 中的默认值，修改后重启）：Enabled=true、MaxEnabledRules=50、QueryTimeoutSeconds=5、BudgetSecondsPerMinute=15、MaxPendingDeliveries=1000。
 - 调低预算/规则数优先于提高 DuckDB 全局线程数；窗口默认 5 分钟，上限 60 分钟。
 - 全局 Enabled=false 暂停评估与发送，不删除已有规则。
 - 默认告警不读取冷层；热保留配置及归档台账用于覆盖检查。
 
 ## 故障
 - 评估失败：检查条件是否在支持子集、时间窗是否已归档；失败不等于 0 条，不产生恢复。
+- 告警专用槽等待过高时先检查普通查询是否释放、告警预算和超时；不要把告警槽并回普通查询槽。
 - 超时：缩小窗口、收紧条件或降低启用规则数；不要仅提高超时掩盖扫描成本。
 - 通知失败：检查渠道启用状态、凭据、目标白名单；最多 3 次尝试，耗尽后显示失败。
 - 通知队列满：处理失效渠道和积压；规则显示错误，不继续无界入队。
@@ -25,3 +26,11 @@
 - 使用假发送器跑 AlertIntegrationTests；真实渠道测试必须由使用者明确触发。
 - 以生产近似数据分别测无告警/开启告警的搜索 P95、摄取吞吐和评估耗时。
 - 保留测试失败与限制；本机小样本不能证明海量部署零影响。
+
+## Go 后端
+- 启动时先调用 `alerts.Initialize(db)`，初始化失败需修复备份恢复的时间字段或重复评估记录后再启动，禁止忽略错误继续运行。
+- 早期 Go 的任意 SQL 告警自动停用；在搜索页重新配置并保存快照/渠道，不直接恢复旧 `query` 字段。
+- `Runner.Options` 应连接设置模块运行参数，`Runner.Send` 应连接真实通知发送器；无发送器显示发送失败，最多三次。
+- 退出顺序为取消后台上下文 → `Runner.Close()` → 关闭 DuckDB/SQLite，避免查询或投递提交时数据库提前关闭。
+- 元数据支持窗口状态与尝试次数跨重启延续。发送语义仍为至少一次；外部成功后进程崩溃可能重复投递。
+- Go 定向验证：在 `go` 目录执行 `go test -tags duckdb_use_lib ./internal/alerts ./cmd/sdata -run 'Test(AlertHTTP|SaveVersion|SaveRejects|ConditionWhitelist|BoundCount|SweepTransitions|StateGaps|DeliveryRetry|MissingSender|InitializeMigrates)'`；需配置本机 DuckDB 动态库与 CGO 工具链。

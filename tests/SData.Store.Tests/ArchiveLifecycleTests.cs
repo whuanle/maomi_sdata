@@ -1,5 +1,6 @@
 using global::Xunit;
 using SData.Store;
+using SData.Settings.Services;
 using SData.Store.Core;
 using SData.Store.Models;
 using SData.Store.QueryDsl;
@@ -41,10 +42,10 @@ public partial class ArchiveTests
         Assert.Single(await rum.ListSessionEventsAsync("project", "session", day, day.AddHours(12), harness.Token));
         Assert.Equal("compressed-chunk", Assert.Single(await rum.GetReplayAsync("project", "session", day, day.AddHours(12), harness.Token)).BlobBase64);
         Assert.Empty((await rum.SearchSessionsAsync("other", day, day.AddHours(12), new RumSessionFilter(), harness.Token)).Items);
-        var analytics = new AnalyticsExecutor(harness.Manager, harness.Options, harness.Resolver, NullLogger<AnalyticsExecutor>.Instance);
+        var analytics = new AnalyticsExecutor(harness.Manager, harness.Options, SystemSettingsProvider.FileOnly(harness.Options), harness.Resolver, NullLogger<AnalyticsExecutor>.Instance);
         var cold = await analytics.ExecuteSearchAsync("SELECT count(*) AS n FROM {{sessions}} WHERE ts >= $start AND ts < $end", day, day.AddHours(12), cancellationToken: harness.Token);
         Assert.Equal(1L, Convert.ToInt64(cold.Rows.Single()[0]));
-        var traces = new TraceStore(harness.Manager, harness.Options, harness.Resolver);
+        var traces = new TraceStore(harness.Manager, SystemSettingsProvider.FileOnly(harness.Options), harness.Resolver);
         Assert.Single(await traces.GetTraceAsync("trace", harness.Token));
         var metrics = new MetricStore(harness.Manager, harness.Options, harness.Resolver);
         Assert.Contains("cpu", await metrics.ListNamesAsync(harness.Token));
@@ -116,7 +117,7 @@ public partial class ArchiveTests
         var scopes = new SingleScopeFactory(harness.Ledger);
         var cache = new ColdLedgerCache(scopes, NullLogger<ColdLedgerCache>.Instance);
         var objects = new LocalObjectStore();
-        using var coldCache = new ColdCacheService(harness.Options, objects, NullLogger<ColdCacheService>.Instance);
+        using var coldCache = new ColdCacheService(SystemSettingsProvider.FileOnly(harness.Options), objects, NullLogger<ColdCacheService>.Instance);
         var resolver = new TableResolver(restarted, harness.Options, harness.Settings, cache, coldCache, NullLogger<TableResolver>.Instance);
         var resolved = await resolver.ResolveAsync(DataDomain.Logs, day, day.AddHours(12));
         Assert.Empty(resolved.LocalTables);

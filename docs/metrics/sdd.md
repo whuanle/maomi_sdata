@@ -8,6 +8,8 @@
 
 ## 组件
 
+- Go：`go/internal/query/promql.go` 解析同一子集并生成绑定 SQL，单次解析天表集合，区间复用；`go/cmd/sdata/prometheus.go` 提供原 vector/matrix 与 bad_data 响应，JWT 必需。保持 C# 的 rate=(max-min)/窗口秒数、without 与 offset 的现有子集限制，不宣称完整 Prometheus 语义；单查询预算 30 秒，当前仅热表。
+
 - `MetricsController`：既有指标查询（MetricStore 分桶聚合/序列浏览）。
 - `POST /api/metrics/search`（T311）：C1 DSL，经 IQueryDslExecutor。
 - `MetricsCoreModule`：注册 PromqlExecutor（T711）。

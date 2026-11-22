@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using SData.Settings.Services;
 using SData.Infra;
 using SData.Infra.Services;
 using SData.Settings;
@@ -167,7 +168,7 @@ public class SelfTelemetryTests
         await using var connection = new DuckDbConnectionManager(options, logger);
         await connection.InitializeAsync();
         var buffer = new IngestBuffer(options);
-        using var writer = new IngestWriterService(buffer, connection, options, new DefaultIdProvider(1),
+        using var writer = new IngestWriterService(buffer, connection, SystemSettingsProvider.FileOnly(options), new DefaultIdProvider(1),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<IngestWriterService>.Instance);
         await writer.StartAsync(CancellationToken.None);
         using var tracer = Sdk.CreateTracerProviderBuilder().AddSource("local-store-test")
@@ -186,7 +187,7 @@ public class SelfTelemetryTests
         meter.CreateCounter<long>("self.round.trip").Add(9);
         Assert.True(tracer.ForceFlush());
         Assert.True(metrics.ForceFlush());
-        var traceStore = new TraceStore(connection, options);
+        var traceStore = new TraceStore(connection, SystemSettingsProvider.FileOnly(options));
         var metricStore = new MetricStore(connection, options);
         var deadline = DateTime.UtcNow.AddSeconds(10);
         var persisted = false;

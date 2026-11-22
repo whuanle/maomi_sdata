@@ -186,6 +186,7 @@ public class MqRetryNotificationTests
         public MqInstanceOptions Instance { get; } = new() { Id = id, Name = "fake consumer", Enabled = true, AlertsEnabled = true, NotificationChannelIds = ["1"] };
         public List<MqInstanceOptions> GetMqInstances() => [Instance];
         public DuckDbSettings GetDuckDb() => new();
+        public RuntimeSettings GetRuntime() => new();
         public S3Options GetS3() => new();
         public RetentionPlanOptions GetRetention() => new();
         public CompressionOptions GetCompression() => new();

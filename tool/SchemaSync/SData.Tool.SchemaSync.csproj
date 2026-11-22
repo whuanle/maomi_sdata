@@ -7,15 +7,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="$(RepoRoot)\src\database\SData.Database.Sqlite\SData.Database.Sqlite.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\store\SData.Store.Core\SData.Store.Core.csproj" />
-		<ProjectReference Include="$(RepoRoot)\src\infra\SData.Infra.Configuration.Shared\SData.Infra.Configuration.Shared.csproj" />
+		<ProjectReference Include="$(RepoRoot)\src\SData\SData.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Extensions.Configuration" />
 		<PackageReference Include="Microsoft.Extensions.Logging" />
-		<PackageReference Include="NetEscapades.Configuration.Yaml" />
 	</ItemGroup>
 
 </Project>

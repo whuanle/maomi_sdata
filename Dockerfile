@@ -27,9 +27,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=backend-build /app/publish ./
 COPY --from=ui-build /src/ui/dist-output ./wwwroot
-COPY configs/system.example.json configs/system.example.json
-ENV SDATA_FILE=/app/configs/system.json \
-    ASPNETCORE_ENVIRONMENT=Production
+# 默认参数内置于 appsettings.json；首次启动复制为 /app/configs/appsettings.json 供覆盖，/app/configs 另存运行时生成的 RSA 私钥
+ENV ASPNETCORE_ENVIRONMENT=Production
 EXPOSE 5300
 VOLUME ["/app/data", "/app/configs"]
 ENTRYPOINT ["dotnet", "SData.dll"]

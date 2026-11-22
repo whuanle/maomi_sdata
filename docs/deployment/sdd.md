@@ -15,17 +15,25 @@
 ## 镜像边界
 
 - Node 22 / pnpm 10 构建时先类型检查，生成主应用和 `wwwroot/rum/probe.js`；.NET 10 分阶段发布宿主。
-- `.dockerignore` 排除运行时 RSA 私钥、私有配置、本地前端构建及测试产物。镜像内只带配置模板，运行时私钥首次启动生成。
+- `.dockerignore` 排除运行时 RSA 私钥、私有配置（含 `/configs/appsettings.json`）、本地前端构建及测试产物。镜像内 `appsettings.json` 含控制台日志与无页面入口参数（均有默认值）；运行时私钥与 `configs/appsettings.json` 均在首次启动生成。
 - 不修改或删除本机私钥；公开仓库使用独立初始提交，不导入旧历史。完整旧历史保留于 Gitea 备份分支，历史密钥仍应按已暴露处理并轮换。
+
+## 配置与持久化目录
+
+- 容器声明 `VOLUME /app/data` 与 `/app/configs`；`docker-compose.yml` 以 bind mount 映射 `./data`、`./configs`。两者都是运行状态，须持久化且对容器进程可写（操作见 [sop](sop.md)）。
+- 配置优先级：程序目录 `appsettings.json`（镜像或包内）< `configs/appsettings.json` < 环境变量 `SData__*` < 命令行。
+- 补齐规则（`MainExtensions.EnsureConfigsAppSettings`）：`configs/appsettings.json` 不存在时，复制内容根目录的 `appsettings.json`，配置目录不存在则先创建；已存在则不覆盖；内容根缺少 `appsettings.json` 时不做任何事，也不创建 `configs/`。复制为字节级拷贝，首次启动的生效配置与默认值相同。
+- 取舍：选择完整快照，是为了让运维直接在文件中看到并修改全部参数。代价是镜像升级后，`configs/` 中已存在的同名键仍以旧值为准，需人工合并；新增键照常回落到新镜像默认值。
+- 复制失败（目录只读或无权限）时启动即失败并指向该文件，不静默降级。便携包同样适用：包内不含 `configs/`，首次运行时生成。
 
 ## 独立程序 Release
 
 - `version → build-ui → binaries → publish-release` 与 Docker job 分离；缺 Docker 密钥不阻断二进制发布。默认权限只读，仅汇总 job 可写 Release。
-- 五个原生 runner：Windows x64、Linux x64/ARM64、macOS Intel/Apple Silicon。self-contained .NET 10 **单文件**（`PublishSingleFile=true` + `IncludeNativeLibrariesForSelfExtract=true`），不裁剪，无需安装 .NET/Node；仍需操作系统原生依赖。实测单文件包约 72MB（旧多文件包约 76MB）；R2R 与单文件压缩经实测反而把体积推到 96MB 且冷启动变慢（解压开销），故显式关闭 `PublishReadyToRun` / `EnableCompressionInSingleFile`。
-- 因单文件下 Serilog 无法靠扫描磁盘目录发现 sink 程序集，`MainExtensions.UseSData` 向 `ReadFrom.Configuration` 显式传入 Console/File sink 的 `ConfigurationReaderOptions`，否则启动即抛 "published as single-file"。`runtimeconfig.template.json` 在构建时并入 runtimeconfig（Server/Concurrent/RetainVM/CpuGroup GC + TieredPGO），并通过 `SData.csproj` 排除出发布包。
-- `tool/Release/package.py` 仅打包独立 publish 输出、前端 artifact 和脱敏模板；校验入口兼容单文件 apphost（SData/SData.exe）或完整托管三件套（dll/deps/runtimeconfig），二者缺一或半发布态均拒绝。`SData.csproj` 显式禁止发布运行时配置/数据/开发设置及 `runtimeconfig.template.json`。包内不含初始密码、接入 Key、JWT 私钥或数据库。
-- Windows zip，Unix tar.gz 保留执行位。最终归档由 `smoke.py` 解压到临时目录，原生启动并验证登录、SQLite/DuckDB、首页和探针；运行副本不重新打包。
-- 启动脚本固定 CWD，首次从环境/隐藏输入读取管理员密码并初始化配置；已有配置不覆盖。包内模板无可用凭据，不直接启动裸 apphost。
+- 五个原生 runner：Windows x64、Linux x64/ARM64、macOS Intel/Apple Silicon。self-contained .NET 10 **单文件**（`PublishSingleFile=true` + `IncludeNativeLibrariesForSelfExtract=true` + `EnableCompressionInSingleFile=true`），不裁剪、不做 R2R，无需安装 .NET/Node；仍需操作系统原生依赖。win-x64 实测：压缩后 exe 72MB、解压后目录 80MB、压缩包 69MB；不压缩则 exe 166MB、解压后目录 174MB（压缩包仍约 69MB，下载大小几乎不变）。压缩的代价是运行时私有内存约 +59MB、工作集约 +98MB（实测 173→271MB），首次解压启动多约 0.5 秒，热启动无差异；考虑 [DuckDB 内存复盘](../store/memory-root-cause.md) 后仍选择开启，因为省的是每台部署的常驻磁盘，且内存增量在运行预算内。R2R 只会变大（单独 231MB，与压缩叠加 96MB），显式关闭 `PublishReadyToRun`。`PublishTrimmed` 的 full/partial 模式可把压缩后 exe 降到 32/41MiB，但两者启动即崩溃（Maomi 模块构造函数反射、MCP 的 System.Text.Json 反射），在补齐源生成与根标注前不启用。
+- 因单文件下 Serilog 无法靠扫描磁盘目录发现 sink 程序集，`MainExtensions.UseSData` 向 `ReadFrom.Configuration` 显式传入 Console sink 的 `ConfigurationReaderOptions`，否则启动即抛 "published as single-file"。日志只输出到控制台，已移除 `Serilog.Sinks.File`。`runtimeconfig.template.json` 在构建时并入 runtimeconfig（Server/Concurrent/RetainVM/CpuGroup GC + TieredPGO），并通过 `SData.csproj` 排除出发布包。
+- `tool/Release/package.py` 仅打包独立 publish 输出、前端 artifact 和包内 README；发布目录中的 `wwwroot` 不带入（本机构建残留的旧哈希资源会与新前端并存），网页根只取 `--ui` 的前端产物。校验入口兼容单文件 apphost（SData/SData.exe）或完整托管三件套（dll/deps/runtimeconfig），二者缺一或半发布态均拒绝。`SData.csproj` 显式禁止发布运行时配置/数据/开发设置及 `runtimeconfig.template.json`。包内只有 `appsettings.json`（无页面入口参数的默认值与控制台日志），`configs/appsettings.json` 不随包发布，不含接入 Key、JWT 私钥或数据库。
+- Windows zip，Unix tar.gz 保留执行位。最终归档由 `smoke.py` 解压到临时目录，直接运行 `SData.exe`/`SData`，用内置默认密码登录并验证 SQLite/DuckDB、首页和探针；同时断言包内无 `configs/`、无启动脚本，运行目录无日志文件；首次启动后 `configs/appsettings.json` 与包内 `appsettings.json` 逐字节一致。运行副本不重新打包。
+- 无启动脚本：直接运行包内 `SData.exe`/`SData`，双击即可。参数内置默认值；`appsettings.json` 放无页面入口的参数，首次启动复制生成的 `configs/appsettings.json` 覆盖它，环境变量 `SData__*` 优先；宿主不读取 `SDATA_FILE` 与 `configs/system.*`。RSA 私钥仍写入 `configs/rsa_private.key`（运行时生成）。已知限制：内容根取当前工作目录，从其它目录启动时读不到程序目录的 `appsettings.json`（控制台无日志），`data/` 与 `configs/` 会写入该目录；双击或在程序目录内启动不受影响。
 - 五个目标全部通过才创建 draft、上传附件及 SHA256SUMS.txt，再公开对应 tag Release；同 tag 重跑覆盖同名资产，已有公开 Release 重跑期间资产更新不保证原子性。
 - Release 保留原 tag，归档版本去掉前缀 v 但保留构建元数据；预发布标记 prerelease 且不更新 latest。稳定 tag 补发会更新 latest，顺序约束同镜像发布。
 - 不支持 Windows ARM64（Kafka 原生依赖不足）和 Linux musl；macOS 包未签名/公证。DuckDB macOS 库含 x64/ARM64，但运行验收仍由对应 runner 完成。

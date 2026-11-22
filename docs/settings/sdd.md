@@ -6,6 +6,15 @@
 
 系统设置页（`/settings`，管理员）：把原本只能改 `configs/system.yaml` + 重启的运行参数（S3 冷存储、三段保留、数据压缩、OTLP 导出）搬到 UI，按功能卡片组织；S3/保留/压缩**立即生效**，OTLP **重启生效**。MQ 日志源最初为设置页一个 tab，2026-11-16 起迁出为独立「日志消费」页（`/log-consumption`）；2026-11-17 起升级为**多实例 + 每主题解析规则**（`system:mq` 键），保存后由消费管理器**自动热更新**（见 ingest 模块），仍归本模块管理配置读写。
 
+## Go 兼容实现边界（2026-11-22）
+
+- `go/internal/settings` 与 `cmd/sdata/settings_handlers.go` 保持现有 Web/C# 不变：白名单合并响应、嵌套 retention/runtime、codec 转 archiveParquetCodec、秘密保留与脱敏，覆盖写入相同 `system:*` 键；不再导出原始 setting 全表。摄取仅展示启动白名单字段。
+- 宿主用 `registerSettingsRoutes` 替换旧路由，Store/Auth 就绪后执行 `initializeSettings`；成功后唯一赋值 `App.Settings`，请求复用该实例，不重新读取签名材料或懒初始化。DuckDB 内存绑定参数即时应用、读回、保存失败回滚，重启按覆盖恢复。其它消费者未接入时返回 **202 + X-SData-Settings-Apply: stored-not-applied + Warning**，只承诺配置已保存，不承诺热更新或重启后应用；接入点为 `Service.Apply`。Go 文件配置模型尚不包含全部 C# 设置，默认视图只合并当前 Go 启动字段与内置业务默认值。
+- API Key 支持两用途的 create/rotate/enable/delete/reveal，补齐旧 `agent_key.enabled`，认证哈希仍沿用现有格式；通知支持11种协议、版本冲突、显式 keepSecrets、模板、目标限制及真实发送。Go AES-GCM 密文绑定用途/记录编号，密钥由内部 Go 签名材料域分离派生；不是 C# Data Protection 密钥环的兼容实现。旧哈希可继续鉴权，无法解密的历史恢复材料明确409，不伪造 reveal。数据库及签名材料仍须整体保护。
+- MQTT 提供哈希持久化和 `MQTTAuthenticate` 新连接检查；shared/prefix模式拒绝空密码或超过1024个UTF-16码元的密码，none模式不检查密码。只有监听器接入并显式设置 `MQTTAuthApplied` 后才允许保存，未接入返回501。MQ 实例使用 `system:mq`，可读取旧 Go `mq_instances`；消费管理器尚需改读主键并实现规则，不能将配置保存视为消费成功。
+- MQ 预览支持 raw/json/regex/csv/logfmt/otlp-json，最多50条，映射失败包含错误记录；syslog、otlp-proto、.NET 自定义时间格式明确501，正则采用 Go RE2 子集。S3连接测试只有配置真实 `Service.TestS3` 适配器后才执行，缺适配器明确501。通知自建目标需宿主传入 `AllowedOrigins`；默认仅允许内置公共渠道，不为兼容而关闭目标检查。
+- 历史JSON损坏、内存/压缩/运行参数非法时回退并记录固定设置键；认证损坏记录键后拒绝连接。日志不记录设置值或底层错误文本。`RuntimeOptions(ctx)`（保留`GetRuntime`别名）为告警预算独立读取`system:runtime`，不读取其它设置或查询DuckDB，元数据库读取失败显式返回error；`SendNotification(ctx,id,message)` 为投递提供真实结果，`Success=false`须转为投递失败，不能仅检查error。
+
 ## DuckDB 内存
 
 - 管理员 `?tab=duckdb`，GET 合并视图含 `duckDb.memoryLimit/effectiveMemoryLimit`；PUT `/api/settings/duckdb` 仅接收 `memoryLimit`，保存 `system:duckdb`，不开放路径和线程。

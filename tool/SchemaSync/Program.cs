@@ -2,7 +2,6 @@ using DuckDB.NET.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using NetEscapades.Configuration.Yaml;
 using SData.Database;
 using SData.Database.Sqlite;
 using SData.Infra;
@@ -17,8 +16,7 @@ using SData.Store.Core;
 //   duck    对 DuckDB 应用内嵌 DDL（幂等）
 var command = args.FirstOrDefault() ?? "script";
 var configuration = BuildConfiguration();
-var systemOptions = configuration.GetSection("SData").Get<SystemOptions>()
-    ?? throw new FormatException("The system configuration (SData section) cannot be loaded.");
+var systemOptions = configuration.GetSection("SData").Get<SystemOptions>() ?? new SystemOptions();
 AppConst.ContentRoot = Directory.GetCurrentDirectory();
 
 var loggerFactory = LoggerFactory.Create(builder => builder.AddSimpleConsole());
@@ -139,29 +137,6 @@ string ResolveDbPath()
 
 IConfiguration BuildConfiguration()
 {
-    var builder = new ConfigurationBuilder();
-    var file = Environment.GetEnvironmentVariable("SDATA_FILE");
-    var candidates = new List<string>();
-    if (!string.IsNullOrEmpty(file))
-    {
-        candidates.Add(file);
-    }
-
-    candidates.Add(Path.Combine(Directory.GetCurrentDirectory(), "configs", "system.yaml"));
-    candidates.Add(Path.Combine(Directory.GetCurrentDirectory(), "configs", "system.json"));
-
-    var configFile = candidates.FirstOrDefault(File.Exists)
-        ?? throw new FileNotFoundException("System config not found (configs/system.yaml). Set SDATA_FILE to override.");
-
-    var extension = Path.GetExtension(configFile).ToLowerInvariant();
-    if (extension is ".yaml" or ".yml")
-    {
-        builder.AddYamlFile(configFile);
-    }
-    else
-    {
-        builder.AddJsonFile(configFile);
-    }
-
-    return builder.Build();
+    // 参数均为内置默认值，仅允许通过环境变量 SData__* 覆盖
+    return new ConfigurationBuilder().AddEnvironmentVariables().Build();
 }

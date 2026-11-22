@@ -4,6 +4,8 @@
 
 > 关联：[sdd](sdd.md) · [bdd](bdd.md) · [sop](sop.md)
 
+- Go 回归：在 `go` 下运行 `go test -tags duckdb_use_lib ./cmd/sdata ./internal/store -run 'TestAnalytics|TestSavedQuery|TestUnmodifiedFrontend'`（Windows CGO 环境见 Go README）。使用临时库，不复用生产目录；`kind=search/analytics` 为快照，执行接口拒绝将其当 SQL。不因接口返回 200 就认定迁移完成，仍须检查结果值与截断。
+
 - 工作台验收：更新并重启后端后进入 `/analytics`，刷新目录检查实际字段类型/可空性；选表后表列表与结构平分剩余高度，各自滚动且搜索框保持可见。分别筛选表名和字段名，确认互不影响，切表清空字段筛选；结构/示例不改草稿。查询栏保持紧凑双行，模式下拉固定宽度，Lucene 输入占中间可用空间，时间/行数/执行靠右；窄屏允许换行，不遮挡控件。SQL 补全区分物理表和逻辑来源，Ctrl/Cmd+Enter 执行；Lucene 检查五类来源、AND/OR/NOT、参数绑定、行数及保存恢复。目录返回 HTML 时检查后端版本与代理。亮暗/窄屏、键盘与 IME 需真实浏览器验收。
 - 图表链接验收：八个页签切换、编辑来源/条件/时间、运行及表头排序后检查地址变化，复制到新页面应恢复相同条件并首查；相对时间按打开时刻重算，绝对时间不漂移。验证导航返回和仪表盘编辑不改写地址；非法链接不崩溃。URL 含查询值，分享前检查敏感信息，复杂条件长链接需确认代理长度限制。回归 `chartUrlState.test.ts`、`ChartExplorer.test.tsx`，真实浏览器链路另行验收。
 - 时序 SQL 验收：Builder 切到 SQL 后说明默认展开，可折叠和复制示例；编辑区 260px，时间/运行在下方左对齐，数据源行展示告警和显示设置。SQL 模式无序列/公式/粒度操作；切回 Builder 保留配置。SQL 返回 `ts_bucket/value`，按 `series` 或其他维度拆线；时间过滤须显式写 `$start/$end`，切换来源时示例与编辑器同步，首次生成对应查询，返回恢复该来源草稿和绑定参数；旧结果清空且点击 Run 后才查询。检查亮暗和窄屏；专项回归 `ChartExplorer.test.tsx`。

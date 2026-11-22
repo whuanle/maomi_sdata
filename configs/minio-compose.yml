@@ -1,6 +1,6 @@
 # MinIO 单机示例（T513）：SData 冷存储 S3 兼容端点
 # 用法：docker compose -f configs/minio-compose.yml up -d
-# 对应 configs/system.yaml 的 SData:S3 配置：
+# 对应设置页「S3 冷存储」配置（S3 不再从配置文件读取）：
 #   S3:
 #     Endpoint: http://localhost:9000
 #     Bucket: sdata-cold

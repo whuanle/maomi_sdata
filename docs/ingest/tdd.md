@@ -4,6 +4,14 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @INGEST-S8 Go 值级映射 | `go/internal/ingest/mapper_test.go`：三信号 JSON/protobuf/gRPC 值比较、64 位整数、微秒边界、倒序时间、资源/属性/事件、全部 gauge/sum 点及 histogram | 2026-11-22：`go test -count=1 ./internal/ingest` 通过；保留 C# JSON/proto 格式差异，非整站迁移验收 |
+| @INGEST-S9 Go 传输边界 | `go/internal/ingest/transport_test.go`：HTTP gzip/Content-Type/响应、坏报文、字节预算、体积上限、缺失缓冲；bufconn 三信号 gzip 与 4 MiB 拒绝 | 2026-11-22：上述 Go ingest 专项通过；HTTP 首次拒绝停止，gRPC 按信号返回拒绝数，超限不入队 |
+| @INGEST-S10 Go 认证 | `go/cmd/sdata/ingest_auth_test.go`：`TestOTLPGRPCRequiresIngestCredentials` | 2026-11-22：由宿主集成任务独立执行与回填；本切片未修改认证/路由 |
+| @INGEST-PF16 自身遥测降本 | `SelfTelemetryTests`、`LocalMetricExporter` 标签缓存 | 2026-11-21：SelfTelemetryTests 39/39；链路 resource JSON 静态复用，指标标签 JSON 缓存，采集策略与外部出口不变 |
+| @INGEST-PF11 接入背压与字节预算 | `IngestBatchTests.SimpleJsonPreflightReturns429WithRetryAfter`、`MqPersistenceTests.ByteBudgetRejectsOversizedBatchAndTracksBufferedBytes`、OTLP/ES 背压回归 | 2026-11-21：简单 JSON 内容超预算返回 429+Retry-After；缓冲估算字节与 256 MiB 默认预算可统计；MQ持久化定向 14/14、Ingest全量 140/140。真实 1 KB/4 KB 长稳与外部压测待 PF02 |
+| @INGEST-PF09 MQ 批量入缓冲回压 | `MqLogDecoderTests.EnqueueAllAsync_BufferFull_RetriesUntilAccepted`、`MqPersistenceTests.BatchEnqueuePreservesAcceptedAndDroppedCounts`、MQ 阻塞/持久化回执集 | 2026-11-21：批量拒绝记录可准确回填重试，已接受记录不重复；MQ 解码与阻塞 37/37、Store MQ 持久化 13/13。Kafka offset/RabbitMQ/Pulsar 消费者端批量确认仍待集成验收 |
+| @INGEST-PF08 简单 JSON 批量入口降本 | `IngestBatchTests.SimpleJsonAllTypesReturnBatchAcceptedCounts`、`MqPersistenceTests.BatchEnqueuePreservesAcceptedAndDroppedCounts` | 2026-11-21：日志、链路、指标、遥测批量提交用例通过；批量满载计数保持逐条语义。原始 JSON 片段直传与字节预算仍待 PF11，CPU 压测待 PF02 |
+| @INGEST-PF12 OTLP HTTP 请求体与事件属性降本 | `OtlpHttpBodyTests`（JSON/protobuf 普通与 gzip 请求体）、`OtlpProtoParserTests.ParseTraces_PreservesMicrosecondsAndEventAttributes` | 2026-11-21：OTLP 相关定向测试 30/30 通过；未做 OTLP CPU 压测对照 |
 | @INGEST-S7 外部出口授权 | `SelfTelemetryTests`（HTTP/gRPC 独立 Header、Bearer/Basic/编码、清空覆盖环境配置、401/403及本地独立导出） | 2026-11-20：遥测39/39、此前Ingest全量116/116通过；仅本机测试接收器，无真实外发或重启部署 |
 | @INGEST-AUTH1 强制鉴权与协议路由 | IngestAuthenticationIntegrationTests、IngestApiKeyFilterTests | 2026-11-19：HTTP路径与gRPC三信号鉴权11/11，Ingest全量99/99；真实外部Collector未验收 |
 | @INGEST-S6 | `SelfTelemetryTests`（空/非法/不可达外部出口、本地映射/背压、真实缓冲到 DuckDB 查询） | 2026-11-19：遥测专项 23/23（含真实 DuckDB、本机 OTLP 双出口及无递归验证）；末轮宿主编译通过、Ingest 全量 96/97，鉴权用例预期放行实际 401。曾受同期 Agents 编译错误阻塞，末轮已消失；未重启部署或真实外发 |

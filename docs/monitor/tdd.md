@@ -4,6 +4,9 @@
 
 | 场景 | 验证物 | 结果（日期） |
 |---|---|---|
+| @MON-GO1 | `go/cmd/sdata/monitor_parity_test.go` | 2026-11-22：真实临时库通过；两日日志天表=2，今日日志=1，会话=1，日志累计=2且不复制到其它域 |
+| @MON-PF13 总览今日行数缓存 | `QueryOverviewCommandHandlerTests.Handle_CachesTodayRowCountsForTtl` | 2026-11-21：连续总览刷新复用今日行数查询；定向 Monitor 9/9 |
+| @MON-PF01 GC、存储和 Store 耗时指标 | `MonitorControllerTests.Metrics_ReportsGcAndAvailableStorageSamples`、Store Rollup/归档/保留专项 | 2026-11-21：Monitor 22 通过、1 平台跳过；Store Rollup/归档/保留专项 14/14 通过；验证 GC/存储采样、锁和阶段/维护直方图及工作量计数。未启动宿主做 HTTP 抓取 |
 | GC 分代回收次数指标 | `/metrics` 的 `sdata_gc_collection_count_total{generation}`、`ResourceSnapshot.GcCollectionCount0/1/2` | 2026-11-20：随宿主 Release 编译通过；Monitor 21 通过 1 平台跳过；与 OTel Runtime 标准 GC 指标互补 |
 | 总览/状态今日行数批量统计 | `QueryOverviewCommandHandlerTests`（`StubStoreInfo.CountTablesAsync`）、Monitor 全量 | 2026-11-20：Monitor 21 通过 1 平台跳过；七域/四域 count 合并为单条查询，输出与逐表统计一致 |
 | @MON-S8 持久化恢复后隐藏提示 | `LogConsumptionPage.test.tsx`：未恢复仍告警，已恢复整块提示及原因完全不渲染 | 2026-11-20：本轮消费页17/17、类型检查通过；前轮前端全量773/773，本轮未重跑全量或做浏览器/部署验收 |

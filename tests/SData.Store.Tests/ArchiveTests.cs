@@ -42,6 +42,8 @@ namespace SData.Store.Tests;
 
         var archived = await Pin(harness).Archive.RunOnceAsync(harness.Token);
         Assert.Equal(1, archived);
+        Assert.Equal(2, harness.Manager.Snapshot.Counters.Single(item => item.Name == "sdata_archive_rows_total").Value);
+        Assert.True(harness.Manager.Snapshot.Histograms.Single(item => item.Name == "sdata_archive_duration_seconds").Count > 0);
 
         var ledger = await harness.GetLedgerAsync("logs");
         var row = Assert.Single(ledger);
@@ -78,6 +80,33 @@ namespace SData.Store.Tests;
         ArchiveService.PrepareDestination("s3://sdata-cold/archive/logs/20261117.parquet");
     }
 
+    /// <summary>冻结表的 COPY 与词项索引可在写门仍被占用时通过克隆连接执行，不阻塞其他写入门持有者.</summary>
+    [Fact]
+    public async Task Archive_CopyAndIndex_DoNotAcquireWriteGate()
+    {
+        using var harness = new ArchiveHarness(options => options.Retention.Logs.HotDays = 1);
+        var day = DateTimeOffset.UtcNow.Date.AddDays(-2);
+        await harness.CreateDayTableWithRowsAsync(TimeTables.LogsPrefix, day, 2);
+        var snapshot = await harness.Manager.FreezeDayAsync(TimeTables.LogsPrefix, day, harness.Token);
+        Assert.NotNull(snapshot);
+
+        var parquetPath = Path.Combine(harness.TempDirectory, "maintenance-copy.parquet").Replace('\\', '/');
+        var indexPath = Path.Combine(harness.TempDirectory, "maintenance-index.idx.parquet").Replace('\\', '/');
+        using (await harness.Manager.LockWriteAsync(harness.Token))
+        {
+            await harness.Manager.ExecuteMaintenanceAsync(
+                $"COPY (SELECT * FROM {snapshot} ORDER BY service) TO '{parquetPath.Replace("'", "''")}' (FORMAT PARQUET, COMPRESSION snappy)",
+                cancellationToken: harness.Token);
+            await harness.Manager.ExecuteMaintenanceAsync(
+                ColdTermIndex.BuildIndexSql(snapshot!, indexPath, "snappy"),
+                cancellationToken: harness.Token);
+        }
+
+        Assert.True(File.Exists(parquetPath));
+        Assert.True(File.Exists(indexPath));
+        Assert.Equal(2, await harness.Manager.CountAsync(snapshot!, harness.Token));
+    }
+
     /// <summary>三段保留：归档即 DROP 热表；冷段到期（hot+cold）后清理冷对象与台账行，冷窗口内对象存活.</summary>
     [Fact]
     public async Task Retention_ThreeSegments_DropsOnlyArchivedExpired()
@@ -102,11 +131,56 @@ namespace SData.Store.Tests;
 
         // 冷段→过期：超过 hot+cold 的对象与台账行清理，冷窗口内存活
         await Pin(harness).Retention.RunOnceAsync(harness.Token);
+        var counters = harness.Manager.Snapshot.Counters.ToDictionary(item => item.Name, StringComparer.Ordinal);
+        Assert.True(counters["sdata_retention_archive_records_expired_total"].Value > 0);
+        Assert.True(harness.Manager.Snapshot.Histograms.Single(item => item.Name == "sdata_retention_duration_seconds").Count > 0);
         var ledger = await harness.GetLedgerAsync("logs");
         var row = Assert.Single(ledger);
         Assert.Equal(TimeTables.Name(TimeTables.LogsPrefix, warmDay)[5..], row.Day);
         Assert.True(harness.ColdObjectExists("logs", row.Day));
         Assert.False(harness.ColdObjectExists("logs", TimeTables.Name(TimeTables.LogsPrefix, expiredDay)[5..]));
+    }
+
+    /// <summary>冷对象删除期间不持源切换锁；删除失败时恢复查询可见性并由下轮重试.</summary>
+    [Fact]
+    public async Task Retention_ExpiredObjectDelete_DoesNotHoldSourceLockAndRetries()
+    {
+        var objects = new BlockingFailingObjectStore();
+        using var harness = new ArchiveHarness(options =>
+        {
+            options.Retention.Logs.HotDays = 7;
+            options.Retention.Logs.ColdDays = 30;
+        }, objects);
+
+        var expiredDay = DateTimeOffset.UtcNow.Date.AddDays(-40);
+        await harness.CreateDayTableWithRowsAsync(TimeTables.LogsPrefix, expiredDay, 1);
+        Assert.Equal(1, await Pin(harness).Archive.RunOnceAsync(harness.Token));
+
+        var retention = Pin(harness).Retention.RunOnceAsync(harness.Token);
+        await objects.DeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        using (var reader = await harness.Manager.ReadSourcesAsync(harness.Token)
+                   .WaitAsync(TimeSpan.FromSeconds(1)))
+        {
+            var hidden = await harness.Resolver.ResolveAsync(
+                DataDomain.Logs, expiredDay, expiredDay.AddHours(12), cancellationToken: harness.Token);
+            Assert.Empty(hidden.LocalTables);
+            Assert.Empty(hidden.ColdFiles);
+            Assert.Empty(hidden.ColdParquetGlobs);
+        }
+
+        objects.ReleaseDelete.TrySetResult();
+        await retention;
+
+        var ledger = Assert.Single(await harness.GetLedgerAsync("logs"));
+        Assert.True(harness.ColdObjectExists("logs", ledger.Day));
+        var restored = await harness.Resolver.ResolveAsync(
+            DataDomain.Logs, expiredDay, expiredDay.AddHours(12), cancellationToken: harness.Token);
+        Assert.Single(restored.ColdFiles);
+
+        await Pin(harness).Retention.RunOnceAsync(harness.Token);
+        Assert.Empty(await harness.GetLedgerAsync("logs"));
+        Assert.False(harness.ColdObjectExists("logs", ledger.Day));
     }
 
     /// <summary>旧形态兼容：ColdDays=0 时超 hot 天数直接 DROP 且不产生台账（行为与旧版一致）.</summary>
@@ -126,6 +200,7 @@ namespace SData.Store.Tests;
         Assert.Equal(0, await Pin(harness).Archive.RunOnceAsync(harness.Token));
         await Pin(harness).Retention.RunOnceAsync(harness.Token);
 
+        Assert.True(harness.Manager.Snapshot.Counters.Single(item => item.Name == "sdata_retention_tables_dropped_total").Value > 0);
         Assert.DoesNotContain(TimeTables.Name(TimeTables.LogsPrefix, day), harness.Manager.GetManagedTables(TimeTables.LogsPrefix));
         Assert.Empty(await harness.GetLedgerAsync("logs"));
     }
@@ -347,7 +422,8 @@ namespace SData.Store.Tests;
         /// Initializes a new instance of the <see cref="ArchiveHarness"/> class.
         /// </summary>
         /// <param name="configure">配置回调.</param>
-        public ArchiveHarness(Action<SystemOptions>? configure = null)
+        /// <param name="objectStore">可选对象存储替身（锁并发与故障注入）.</param>
+        public ArchiveHarness(Action<SystemOptions>? configure = null, IObjectStore? objectStore = null)
         {
             TempDirectory = Path.Combine(Path.GetTempPath(), "sdata-archive-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(TempDirectory);
@@ -363,7 +439,7 @@ namespace SData.Store.Tests;
             Manager.InitializeAsync().GetAwaiter().GetResult();
             Bootstrapper = new DuckDbSchemaBootstrapper(Manager, NullLogger<DuckDbSchemaBootstrapper>.Instance);
             Bootstrapper.ApplyAsync().GetAwaiter().GetResult();
-            Writer = new IngestWriterService(new IngestBuffer(options), Manager, options, new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
+            Writer = new IngestWriterService(new IngestBuffer(options), Manager, SystemSettingsProvider.FileOnly(options), new DefaultIdProvider(1), NullLogger<IngestWriterService>.Instance);
 
             var sqlitePath = Path.Combine(TempDirectory, "ledger.db");
             var dbOptions = new DbContextOptionsBuilder<DatabaseContext>().UseSqlite($"Data Source={sqlitePath}").Options;
@@ -372,8 +448,8 @@ namespace SData.Store.Tests;
 
             var scopeFactory = new SingleScopeFactory(Ledger);
             var settings = new SystemSettingsProvider(options, scopeFactory, new DefaultIdProvider(1), NullLogger<SystemSettingsProvider>.Instance);
-            var objectStore = new CompositeObjectStore(new LocalObjectStore(), new S3ObjectStore(options, NullLogger<S3ObjectStore>.Instance));
-            var coldCache = new ColdCacheService(options, objectStore, NullLogger<ColdCacheService>.Instance);
+            objectStore ??= new CompositeObjectStore(new LocalObjectStore(), new S3ObjectStore(options, NullLogger<S3ObjectStore>.Instance));
+            var coldCache = new ColdCacheService(settings, objectStore, NullLogger<ColdCacheService>.Instance);
             var ledgerCache = new ColdLedgerCache(scopeFactory, NullLogger<ColdLedgerCache>.Instance);
             LedgerCache = ledgerCache;
             Resolver = new TableResolver(Manager, options, settings, ledgerCache, coldCache, NullLogger<TableResolver>.Instance);
@@ -442,6 +518,35 @@ namespace SData.Store.Tests;
             {
                 // 临时目录清理失败不阻塞测试
             }
+        }
+    }
+
+    private sealed class BlockingFailingObjectStore : IObjectStore
+    {
+        private readonly LocalObjectStore _inner = new();
+        private int _failed;
+
+        public TaskCompletionSource DeleteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseDelete { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<bool> ExistsAsync(string objectKey, CancellationToken cancellationToken = default)
+            => _inner.ExistsAsync(objectKey, cancellationToken);
+
+        public Task DownloadAsync(string objectKey, string localPath, CancellationToken cancellationToken = default)
+            => _inner.DownloadAsync(objectKey, localPath, cancellationToken);
+
+        public async Task DeleteAsync(string objectKey, CancellationToken cancellationToken = default)
+        {
+            if (!objectKey.EndsWith(".idx.parquet", StringComparison.Ordinal)
+                && Interlocked.CompareExchange(ref _failed, 1, 0) == 0)
+            {
+                DeleteStarted.TrySetResult();
+                await ReleaseDelete.Task.WaitAsync(cancellationToken);
+                throw new IOException("simulated cold-object delete failure");
+            }
+
+            await _inner.DeleteAsync(objectKey, cancellationToken);
         }
     }
 

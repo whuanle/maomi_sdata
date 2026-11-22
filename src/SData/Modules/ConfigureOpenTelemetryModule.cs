@@ -32,8 +32,7 @@ public class ConfigureOpenTelemetryModule : IModule
     /// <inheritdoc/>
     public void ConfigureServices(ServiceContext context)
     {
-        var systemOptions = _configuration.GetSection("SData").Get<SystemOptions>()
-            ?? throw new FormatException("The system configuration (SData section) cannot be loaded.");
+        var systemOptions = _configuration.GetSection("SData").Get<SystemOptions>() ?? new SystemOptions();
 
         // 外部出口设置重启生效；读取失败回退文件配置，不影响固定本地出口。
         var sqlitePath = Path.Combine(AppConst.GetPath(), systemOptions.Database.Path.Replace('\\', '/'));
