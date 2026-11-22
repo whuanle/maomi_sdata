@@ -16,8 +16,9 @@ SData.{Domain}.Api      Controller + {Domain}ApiModule
 
 ## 命令/查询
 
-- 命令 `{Action}{Entity}Command : IRequest<TResponse>`；查询 `Query{Entity}Command`；分页查询继承 `PagedParameter`，响应 `PagedResult<T>`。
-- **每个请求模型实现 `IModelValidator<T>`**；验证在 `MediatRPipelineBehavior` 中执行（进入 Handler 前失败返回 400）。
+- 命令 `{Action}{Entity}Command : IRequest<TResponse>`（Mediator，`using Mediator;`）；查询 `Query{Entity}Command`；分页查询继承 `PagedParameter`，响应 `PagedResult<T>`。
+- **每个请求模型实现 `IModelValidator<T>`**（`SData.Infra.Services`）；验证在 `MediatorPipelineBehavior` 中执行（进入 Handler 前失败返回 400）。
+- Handler 的 `Handle` 返回 `ValueTask<TResponse>`；控制器注入 `IMediator`，`Send` 返回 `ValueTask<TResponse>`（MVC 动作直接返回时签名用 `ValueTask<T>`）。
 - 响应模型放 `Queries/Responses/`（查询）或与命令同文件（简单命令）。
 - Handler 命名 `{Command}Handler`，构造注入 `DatabaseContext` / `I{Xxx}Store` / `IIdProvider` 等。
 

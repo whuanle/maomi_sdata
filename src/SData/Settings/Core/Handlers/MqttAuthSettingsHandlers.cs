@@ -1,5 +1,5 @@
 using System.Text.Json;
-using MediatR;
+using Mediator;
 using SData.Infra.Exceptions;
 using SData.Infra.Services;
 using SData.Settings.Services;
@@ -9,10 +9,10 @@ namespace SData.Settings.Handlers;
 /// <summary>只返回认证模式与已配置标记.</summary>
 public class QueryMqttAuthSettingsCommandHandler(ISystemSettingsProvider settings) : IRequestHandler<QueryMqttAuthSettingsCommand, MqttAuthSettingsResponse>
 {
-    public Task<MqttAuthSettingsResponse> Handle(QueryMqttAuthSettingsCommand request, CancellationToken cancellationToken)
+    public ValueTask<MqttAuthSettingsResponse> Handle(QueryMqttAuthSettingsCommand request, CancellationToken cancellationToken)
     {
         var value = settings.GetMqttAuth();
-        return Task.FromResult(new MqttAuthSettingsResponse { Mode = value.IsValid ? value.Mode : "invalid", HasKey = value.IsValid && value.Mode != "none" });
+        return ValueTask.FromResult(new MqttAuthSettingsResponse { Mode = value.IsValid ? value.Mode : "invalid", HasKey = value.IsValid && value.Mode != "none" });
     }
 }
 
@@ -21,7 +21,7 @@ public class SaveMqttAuthSettingsCommandHandler(ISystemSettingsProvider settings
 {
     private static readonly SemaphoreSlim SaveLock = new(1, 1);
 
-    public async Task<MqttAuthSettingsResponse> Handle(SaveMqttAuthSettingsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<MqttAuthSettingsResponse> Handle(SaveMqttAuthSettingsCommand request, CancellationToken cancellationToken)
     {
         if (request.Mode is not ("none" or "shared" or "prefix") || request.Key == null || request.Key.Length > 256)
             throw BusinessException.Throw(400, "MQTT 认证模式或 key 长度无效");

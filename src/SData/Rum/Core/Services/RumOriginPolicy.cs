@@ -1,12 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SData.Database;
 
 namespace SData.Rum.Services;
 
-/// <summary>基于项目允许站点与可选全局上限的来源策略.</summary>
-public class RumOriginPolicy(IServiceScopeFactory scopeFactory, IConfiguration configuration) : IRumOriginPolicy
+/// <summary>基于项目允许站点的来源策略（校验目标项目配置的 DomainsJson，无全局上限）.</summary>
+public class RumOriginPolicy(IServiceScopeFactory scopeFactory) : IRumOriginPolicy
 {
     /// <inheritdoc/>
     public bool Allows(string projectKey, string? origin)
@@ -41,9 +40,6 @@ public class RumOriginPolicy(IServiceScopeFactory scopeFactory, IConfiguration c
 
     private string? AllowedOrigin(string? origin)
     {
-        var normalized = RumOrigins.Normalize(origin);
-        var limit = configuration.GetSection("SData:Rum:CorsOrigins").Get<string[]>() ?? [];
-        return normalized != null && (limit.Length == 0 || limit.Any(value => RumOrigins.Normalize(value) == normalized))
-            ? normalized : null;
+        return RumOrigins.Normalize(origin);
     }
 }

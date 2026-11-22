@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Rum.Models;
 using SData.Store;
 
@@ -8,9 +8,9 @@ namespace SData.Rum.Handlers;
 public class SearchRumSessionsCommandHandler(IRumStore store) : IRequestHandler<SearchRumSessionsCommand, RumSessionPage>
 {
     /// <inheritdoc/>
-    public Task<RumSessionPage> Handle(SearchRumSessionsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RumSessionPage> Handle(SearchRumSessionsCommand request, CancellationToken cancellationToken)
     {
-        return store.SearchSessionsAsync(request.ProjectKey, request.From, request.To, request, cancellationToken);
+        return await store.SearchSessionsAsync(request.ProjectKey, request.From, request.To, request, cancellationToken);
     }
 }
 
@@ -18,8 +18,8 @@ public class SearchRumSessionsCommandHandler(IRumStore store) : IRequestHandler<
 public class QueryRumSessionEventsCommandHandler(IRumStore store) : IRequestHandler<QueryRumSessionEventsCommand, IReadOnlyList<RumSessionEvent>>
 {
     /// <inheritdoc/>
-    public Task<IReadOnlyList<RumSessionEvent>> Handle(QueryRumSessionEventsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<IReadOnlyList<RumSessionEvent>> Handle(QueryRumSessionEventsCommand request, CancellationToken cancellationToken)
     {
-        return store.ListSessionEventsAsync(request.ProjectKey, request.SessionId, request.From, request.To, cancellationToken);
+        return await store.ListSessionEventsAsync(request.ProjectKey, request.SessionId, request.From, request.To, cancellationToken);
     }
 }

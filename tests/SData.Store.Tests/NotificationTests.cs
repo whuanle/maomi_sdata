@@ -88,33 +88,16 @@ public class NotificationTests
         Assert.Throws<BusinessException>(() => configuration.Merge(command, null));
     }
 
-    [Theory]
-    [InlineData("127.0.0.1", true)]
-    [InlineData("169.254.169.254", true)]
-    [InlineData("::1", true)]
-    [InlineData("::ffff:127.0.0.1", true)]
-    [InlineData("fe80::1", true)]
-    [InlineData("168.63.129.16", true)]
-    [InlineData("fd00:ec2::254", true)]
-    [InlineData("10.1.2.3", false)]
-    [InlineData("fd00::123", false)]
-    [InlineData("8.8.8.8", false)]
-    public void Transport_RejectsMetadataAndLoopback_EvenWhenAllowed(string address, bool blocked)
-    {
-        Assert.Equal(blocked, NotificationTransport.IsForbidden(IPAddress.Parse(address), true));
-        if (address is "10.1.2.3" or "fd00::123") Assert.True(NotificationTransport.IsForbidden(IPAddress.Parse(address), false));
-    }
-
     [Fact]
-    public void Transport_RequiresExactOrigin_AndOfficialHttps()
+    public void Transport_AcceptsAnyHttpTarget_RejectsMalformedUrl()
     {
-        var transport = new NotificationTransport(new SystemOptions { NotificationAllowedOrigins = ["http://gotify.internal:8080"] });
-        transport.Validate("gotify", new Uri("http://gotify.internal:8080/message"));
-        transport.Validate("telegram", new Uri("https://api.telegram.org/bot123:fake/sendMessage"));
-        Assert.Throws<BusinessException>(() => transport.Validate("telegram", new Uri("http://api.telegram.org/bot123:fake/sendMessage")));
-        Assert.Throws<BusinessException>(() => transport.Validate("webhook", new Uri("http://gotify.internal:8081/message")));
-        Assert.Throws<BusinessException>(() => transport.Validate("webhook", new Uri("http://gotify.internal.evil:8080/message")));
-        Assert.Throws<BusinessException>(() => transport.Validate("webhook", new Uri("http://user:pass@gotify.internal:8080/message")));
+        var transport = new NotificationTransport();
+        transport.Validate(new Uri("http://gotify.internal:8080/message"));
+        transport.Validate(new Uri("https://api.telegram.org/bot123:fake/sendMessage"));
+        transport.Validate(new Uri("http://127.0.0.1:9090/hook"));
+        Assert.Throws<BusinessException>(() => transport.Validate(new Uri("http://user:pass@gotify.internal:8080/message")));
+        Assert.Throws<BusinessException>(() => transport.Validate(new Uri("https://gotify.internal:8080/message#fragment")));
+        Assert.Throws<BusinessException>(() => transport.Validate(new Uri("ftp://gotify.internal:8080/message")));
     }
 
     [Fact]
@@ -161,7 +144,7 @@ public class NotificationTests
         await database.Database.OpenConnectionAsync();
         await database.Database.EnsureCreatedAsync();
         var configuration = new NotificationConfiguration(new EphemeralDataProtectionProvider());
-        var transport = new NotificationTransport(new SystemOptions { NotificationAllowedOrigins = ["https://notify.example", "https://hooks.example"] });
+        var transport = new NotificationTransport();
         var service = new NotificationService(database, new DefaultIdProvider(1), configuration, transport, NullLogger<NotificationService>.Instance);
         var first = await service.SaveAsync(new SaveNotificationChannelCommand { Name = "生产通知", Type = type, Enabled = true, Config = Config(type) }, default);
         var second = await service.SaveAsync(new SaveNotificationChannelCommand { Name = "测试通知", Type = type, Enabled = false, Config = Config(type) }, default);
@@ -219,12 +202,12 @@ public class NotificationTests
         return NotificationTypes.Fields[type].ToDictionary(key => key, key => values[key]);
     }
 
-    private sealed class FakeTransport() : NotificationTransport(new SystemOptions())
+    private sealed class FakeTransport() : NotificationTransport()
     {
         public int Sends { get; private set; }
         public bool Fail { get; set; }
 
-        public override Task<(HttpStatusCode Status, string Body)> SendAsync(string type, HttpRequestMessage request, CancellationToken token)
+        public override Task<(HttpStatusCode Status, string Body)> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Sends++;
             if (Fail) throw new HttpRequestException("https://private-token.example");

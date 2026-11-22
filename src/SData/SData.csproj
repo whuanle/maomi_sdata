@@ -37,7 +37,11 @@
 	<ItemGroup>
 		<!-- 模块框架与横切 -->
 		<PackageReference Include="Maomi.Core" />
-		<PackageReference Include="MediatR" />
+		<PackageReference Include="Mediator.Abstractions" />
+		<PackageReference Include="Mediator.SourceGenerator">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
 		<PackageReference Include="FluentValidation" />
 		<PackageReference Include="Yitter.IdGenerator" />
 		<PackageReference Include="Serilog.AspNetCore" />

@@ -27,10 +27,10 @@
 - MQ 支持精确名/名称前缀，精确优先后取最长前缀；RabbitMQ 前缀按队列名发现（需 AdminUrl/AdminUsername/AdminPassword），Pulsar 按 Namespace 内完整主题名发现。Kafka SASL 参数按 broker 设置，禁止关闭认证绕过连接错误。
 - MQ 密码显示 `********`，原样保存保留已有密码，空值表示清除。消费运行态/落库计数来自 Monitor，计数重启归零，不把 Enabled 当连接成功。真实部署与停启见 [MqProducer](../../tool/MqProducer/README.md)。
 - 通知渠道：管理员进入 `/settings?tab=notifications`；选择类型卡片的「新建实例」，填写名称及凭据保存；每种类型均可反复新建，同类型内实例名称不能重复，配置及启停状态独立。已建实例在对应类型内按紧凑列表逐条展示名称、状态和操作，可编辑、启停或删除；创建/更新信息在编辑抽屉查看；不再显示独立渠道表格和顶部刷新工具栏。保存不发送；「测试发送」确认后向目标发送真实消息，草稿不落库；停用/删除后统一发送接口拒发。编辑凭据显式选择保留、替换或清除，必填凭据不能清空保存。
-- 自建 Bark/Gotify/PushDeer/Matrix 和 Custom JSON Webhook 需在 `appsettings.json` 的 `SData:NotificationAllowedOrigins` 列表中配置（或 `configs/appsettings.json` 覆盖），例如 `["https://gotify.example:443", "http://notify.internal:8080"]`，完整 origin 精确匹配，修改后重启。明确放行的内网可用；本机/链路本地/元数据地址始终拒绝。公共渠道需官方 HTTPS，TLS 证书必须有效。
+- 通知目标不限制域名与网段：自建 Bark/Gotify/PushDeer/Matrix、Custom JSON Webhook 乃至本机/内网任意 HTTP/HTTPS 服务都可直接填写使用，无需部署侧白名单，保存即生效（不再需要改配置文件重启）。
 - 通知配置与 SQLite 同目录的 `notification-keys/` 必须共同备份及挂载持久卷，并以操作系统权限保护。密钥环可能未加密，禁止发布/提交；遗失后无法恢复原凭据，需重新配置。跨主机恢复前验证密钥环可解密，勿只复制数据库。
-- 发送失败检查服务配额、凭据、飞书/钉钉签名或关键词限制、DNS、白名单及证书；日志不包含远端响应或秘密，不要为排错打开带 URL 的 HTTP 请求日志。测试成功代表服务接受请求，不承诺客户端已收到。
+- 发送失败检查服务配额、凭据、飞书/钉钉签名或关键词限制、DNS 及证书；日志不包含远端响应或秘密，不要为排错打开带 URL 的 HTTP 请求日志。测试成功代表服务接受请求，不承诺客户端已收到。
 - 首期仅文本；Matrix 不支持加密房间，Server Chan 使用 SCT SendKey 服务；告警规则、发送历史与持久重试见 [Alerts](../alerts/sop.md)。外部验收需另行授权真实目标，自动测试仅使用假传输。
-- 设置页不再展示摄取缓冲页签，旧 `?tab=ingest` 链接回落到成员；运行状态在 Overview 查看。摄取缓冲参数（容量/批量/刷新间隔）启动时绑定，调整 `appsettings.json` 的 `SData:Ingest` 节（或 `configs/appsettings.json` 覆盖）后重启。
+- 设置页不再展示摄取缓冲页签，旧 `?tab=ingest` 链接回落到成员；运行状态在 Overview 查看。摄取缓冲参数（容量/字节预算）启动时绑定，在「启动配置」页签查看当前生效值，用 `configs/system.json` 的 `SData:Ingest` 节覆盖后重启；批量/间隔参数在「运行参数」（PUT /settings/runtime）调整，立即生效。
 
 - MQTT接入认证由设备页管理员入口管理，GET/POST /api/settings/mqtt-auth，复用system:mqtt-auth与缓存刷新。只存哈希与长度，响应不含材料。新连接生效，旧连接需重连；与MQ日志消费、HTTP摄取key无关。损坏或无法加载配置拒绝连接；默认无覆盖时免key。

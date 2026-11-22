@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SData.Rum.Models;
@@ -56,14 +56,14 @@ public class RumQueryController : ControllerBase
     /// <returns>会话摘要列表.</returns>
     /// <summary>分页会话检索.</summary>
     [HttpGet("sessions/search")]
-    public Task<SData.Store.RumSessionPage> SearchSessions([FromQuery] SearchRumSessionsCommand command, CancellationToken cancellationToken)
+    public ValueTask<SData.Store.RumSessionPage> SearchSessions([FromQuery] SearchRumSessionsCommand command, CancellationToken cancellationToken)
     {
         return _mediator.Send(command, cancellationToken);
     }
 
     /// <summary>会话事件时间线（最多 1000 条）.</summary>
     [HttpGet("sessions/events")]
-    public Task<IReadOnlyList<SData.Store.RumSessionEvent>> SessionEvents([FromQuery] QueryRumSessionEventsCommand command, CancellationToken cancellationToken)
+    public ValueTask<IReadOnlyList<SData.Store.RumSessionEvent>> SessionEvents([FromQuery] QueryRumSessionEventsCommand command, CancellationToken cancellationToken)
     {
         return _mediator.Send(command, cancellationToken);
     }

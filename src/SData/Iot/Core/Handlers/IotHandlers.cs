@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using SData.Database;
 using SData.Infra.Exceptions;
@@ -30,7 +30,7 @@ public class SaveDeviceCommandHandler : IRequestHandler<SaveDeviceCommand, Simpl
     }
 
     /// <inheritdoc/>
-    public async Task<Simple<long>> Handle(SaveDeviceCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Simple<long>> Handle(SaveDeviceCommand request, CancellationToken cancellationToken)
     {
         // 标签 JSON 合法性校验
         try
@@ -98,7 +98,7 @@ public class DeleteDeviceCommandHandler : IRequestHandler<DeleteDeviceCommand, E
     }
 
     /// <inheritdoc/>
-    public async Task<EmptyCommandResponse> Handle(DeleteDeviceCommand request, CancellationToken cancellationToken)
+    public async ValueTask<EmptyCommandResponse> Handle(DeleteDeviceCommand request, CancellationToken cancellationToken)
     {
         var deleted = await _databaseContext.Devices.Where(x => x.Id == request.Id)
             .ExecuteDeleteAsync(cancellationToken);
@@ -128,7 +128,7 @@ public class QueryDevicesCommandHandler : IRequestHandler<QueryDevicesCommand, P
     }
 
     /// <inheritdoc/>
-    public async Task<PagedResult<DeviceItem>> Handle(QueryDevicesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<PagedResult<DeviceItem>> Handle(QueryDevicesCommand request, CancellationToken cancellationToken)
     {
         var page = Math.Max(1, request.Page);
         var pageSize = Math.Clamp(request.PageSize, 1, 200);
@@ -191,7 +191,7 @@ public class QueryTelemetryCommandHandler : IRequestHandler<QueryTelemetryComman
     }
 
     /// <inheritdoc/>
-    public async Task<QueryTelemetryCommandResponse> Handle(QueryTelemetryCommand request, CancellationToken cancellationToken)
+    public async ValueTask<QueryTelemetryCommandResponse> Handle(QueryTelemetryCommand request, CancellationToken cancellationToken)
     {
         var response = await _telemetryStore.QueryAsync(new TelemetryQuery
         {
@@ -250,9 +250,9 @@ public class SearchTelemetryCommandHandler : IRequestHandler<SearchTelemetryComm
     }
 
     /// <inheritdoc/>
-    public Task<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchTelemetryCommand request, CancellationToken cancellationToken)
+    public async ValueTask<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchTelemetryCommand request, CancellationToken cancellationToken)
     {
-        return _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Iot, cancellationToken);
+        return await _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Iot, cancellationToken);
     }
 }
 
@@ -272,7 +272,7 @@ public class QueryDeviceLatestCommandHandler : IRequestHandler<QueryDeviceLatest
     }
 
     /// <inheritdoc/>
-    public async Task<List<DeviceLatestValue>> Handle(QueryDeviceLatestCommand request, CancellationToken cancellationToken)
+    public async ValueTask<List<DeviceLatestValue>> Handle(QueryDeviceLatestCommand request, CancellationToken cancellationToken)
     {
         var values = await _telemetryStore.LatestAsync(request.DeviceKey, cancellationToken);
         return values.Select(value => new DeviceLatestValue

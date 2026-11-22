@@ -10,9 +10,6 @@ public class SystemOptions
     /// </summary>
     public bool Debug { get; set; }
 
-    /// <summary>通知自建目标白名单（完整 origin，例如 https://gotify.example:443）.</summary>
-    public List<string> NotificationAllowedOrigins { get; set; } = new();
-
     /// <summary>搜索告警执行预算.</summary>
     public AlertOptions Alerts { get; set; } = new();
 
@@ -78,11 +75,6 @@ public class SystemOptions
     /// 数据压缩（冷存档 parquet 列压缩编码）.
     /// </summary>
     public CompressionOptions Compression { get; set; } = new();
-
-    /// <summary>
-    /// 通用附加监听（契约 C4/T112）：4317/4318/9200 别名端口全部由此实现.
-    /// </summary>
-    public List<ListenerOptions> Listeners { get; set; } = new();
 
     /// <summary>
     /// Kafka 日志消费（可选输入通道；Enabled=false 或未配置时不启动消费者，不建任何连接）.
@@ -223,18 +215,6 @@ public class CompressionOptions
 
     /// <summary>冷存档 parquet 压缩编码（默认 snappy，与 DuckDB 缺省一致）.</summary>
     public string ArchiveParquetCodec { get; set; } = "snappy";
-}
-
-/// <summary>
-/// 附加监听端口.
-/// </summary>
-public class ListenerOptions
-{
-    /// <summary>监听端口.</summary>
-    public int Port { get; set; }
-
-    /// <summary>协议：http / grpc.</summary>
-    public string Protocol { get; set; } = "http";
 }
 
 /// <summary>
@@ -384,7 +364,7 @@ public class RetentionOptions
 public class AuthOptions
 {
     /// <summary>
-    /// 首次启动创建的 admin 初始密码.
+    /// 首次启动创建的 admin 初始密码（值随发布包 appsettings.json 提供，仅数据库无用户时生效；可用环境变量 SData__Auth__InitialAdminPassword 覆盖）.
     /// </summary>
     public string InitialAdminPassword { get; set; } = string.Empty;
 

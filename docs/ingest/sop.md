@@ -7,7 +7,7 @@
 | 协议 | 端点 | 认证 |
 |---|---|---|
 | OTLP/HTTP（标准+旧路径） | `POST /v1/{logs,traces,metrics}` 与 `/api/ingest/otlp/v1/*` | 三态：`X-Api-Key` / `Bearer` / `Basic`(password=Key) |
-| OTLP gRPC | gRPC 服务（经 `SData:Listeners` 4317 grpc 端口或主端口 h2c） | 同上（metadata 头） |
+| OTLP gRPC | gRPC 服务（内置 4317 标准端口，纯 HTTP/2；主端口仅 HTTP/1） | 同上（metadata 头） |
 | ES Bulk | `POST /_bulk` | 同上（Filebeat Basic） |
 | 简单 JSON 批量 | `POST /api/ingest/{logs,traces,metrics,iot}` | 同上 |
 | Kafka 日志消费 | 配置驱动：多实例（日志消费页 `system:mq` 或文件 `SData:Mq:Instances`；旧三键 `SData:Kafka` 兼容合成），每实例 `{BootstrapServers,GroupId,Topics:[{Name,Format,Parser}]}` | `SecurityProtocol/SaslMechanism/SaslUsername/SaslPassword`；生产优先 SaslSsl |

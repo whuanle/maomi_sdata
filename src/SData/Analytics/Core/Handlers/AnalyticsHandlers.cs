@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using SData.Database;
 using SData.Infra.Exceptions;
@@ -13,8 +13,8 @@ public class QueryAnalyticsTablesCommandHandler(IAnalyticsCatalog catalog)
     : IRequestHandler<QueryAnalyticsTablesCommand, IReadOnlyList<AnalyticsTableItem>>
 {
     /// <inheritdoc/>
-    public Task<IReadOnlyList<AnalyticsTableItem>> Handle(QueryAnalyticsTablesCommand request, CancellationToken cancellationToken)
-        => catalog.GetTablesAsync(cancellationToken);
+    public async ValueTask<IReadOnlyList<AnalyticsTableItem>> Handle(QueryAnalyticsTablesCommand request, CancellationToken cancellationToken)
+        => await catalog.GetTablesAsync(cancellationToken);
 }
 
 /// <summary>
@@ -34,7 +34,7 @@ public class ExecuteQueryCommandHandler : IRequestHandler<ExecuteQueryCommand, A
     }
 
     /// <inheritdoc/>
-    public async Task<AnalyticsQueryResponse> Handle(ExecuteQueryCommand request, CancellationToken cancellationToken)
+    public async ValueTask<AnalyticsQueryResponse> Handle(ExecuteQueryCommand request, CancellationToken cancellationToken)
     {
         try
         {
@@ -71,7 +71,7 @@ public class ExecuteSearchSqlCommandHandler : IRequestHandler<ExecuteSearchSqlCo
     }
 
     /// <inheritdoc/>
-    public async Task<AnalyticsQueryResponse> Handle(ExecuteSearchSqlCommand request, CancellationToken cancellationToken)
+    public async ValueTask<AnalyticsQueryResponse> Handle(ExecuteSearchSqlCommand request, CancellationToken cancellationToken)
     {
         try
         {
@@ -111,7 +111,7 @@ public class SaveQueryCommandHandler : IRequestHandler<SaveQueryCommand, Simple<
     }
 
     /// <inheritdoc/>
-    public async Task<Simple<long>> Handle(SaveQueryCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Simple<long>> Handle(SaveQueryCommand request, CancellationToken cancellationToken)
     {
         if (request.Kind == "analytics")
         {
@@ -203,7 +203,7 @@ public class QuerySavedQueriesCommandHandler : IRequestHandler<QuerySavedQueries
     }
 
     /// <inheritdoc/>
-    public async Task<PagedResult<SavedQueryItem>> Handle(QuerySavedQueriesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<PagedResult<SavedQueryItem>> Handle(QuerySavedQueriesCommand request, CancellationToken cancellationToken)
     {
         var page = Math.Max(1, request.Page);
         var pageSize = Math.Clamp(request.PageSize, 1, 200);
@@ -258,7 +258,7 @@ public class GetSavedQueryCommandHandler : IRequestHandler<GetSavedQueryCommand,
     }
 
     /// <inheritdoc/>
-    public async Task<SavedQueryItem> Handle(GetSavedQueryCommand request, CancellationToken cancellationToken)
+    public async ValueTask<SavedQueryItem> Handle(GetSavedQueryCommand request, CancellationToken cancellationToken)
     {
         var savedQuery = await _databaseContext.SavedQueries.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == request.Id, cancellationToken)
@@ -296,7 +296,7 @@ public class DeleteSavedQueryCommandHandler : IRequestHandler<DeleteSavedQueryCo
     }
 
     /// <inheritdoc/>
-    public async Task<EmptyCommandResponse> Handle(DeleteSavedQueryCommand request, CancellationToken cancellationToken)
+    public async ValueTask<EmptyCommandResponse> Handle(DeleteSavedQueryCommand request, CancellationToken cancellationToken)
     {
         var savedQuery = await _databaseContext.SavedQueries.FirstOrDefaultAsync(x => x.Id == request.Id, cancellationToken)
             ?? throw BusinessException.Throw(404, "查询不存在");
@@ -330,7 +330,7 @@ public class ExecuteSavedQueryCommandHandler : IRequestHandler<ExecuteSavedQuery
     }
 
     /// <inheritdoc/>
-    public async Task<AnalyticsQueryResponse> Handle(ExecuteSavedQueryCommand request, CancellationToken cancellationToken)
+    public async ValueTask<AnalyticsQueryResponse> Handle(ExecuteSavedQueryCommand request, CancellationToken cancellationToken)
     {
         var savedQuery = await _databaseContext.SavedQueries.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == request.Id, cancellationToken)

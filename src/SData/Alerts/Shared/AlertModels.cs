@@ -1,5 +1,5 @@
 using FluentValidation;
-using MediatR;
+using Mediator;
 using SData.Infra.Models;
 using SData.Infra.Services;
 

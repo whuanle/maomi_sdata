@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Infra.Models;
 using SData.Store;
 
@@ -21,7 +21,7 @@ public class QueryLogsCommandHandler : IRequestHandler<QueryLogsCommand, PagedRe
     }
 
     /// <inheritdoc/>
-    public async Task<PagedResult<LogItem>> Handle(QueryLogsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<PagedResult<LogItem>> Handle(QueryLogsCommand request, CancellationToken cancellationToken)
     {
         var page = Math.Max(1, request.Page);
         var pageSize = Math.Clamp(request.PageSize, 1, 200);
@@ -79,7 +79,7 @@ public class QueryLogServicesCommandHandler : IRequestHandler<QueryLogServicesCo
     }
 
     /// <inheritdoc/>
-    public async Task<List<string>> Handle(QueryLogServicesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<List<string>> Handle(QueryLogServicesCommand request, CancellationToken cancellationToken)
     {
         var services = await _logStore.ListServicesAsync(cancellationToken);
         return services.ToList();
@@ -103,8 +103,8 @@ public class SearchLogsCommandHandler : IRequestHandler<SearchLogsCommand, SData
     }
 
     /// <inheritdoc/>
-    public Task<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchLogsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchLogsCommand request, CancellationToken cancellationToken)
     {
-        return _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Logs, cancellationToken);
+        return await _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Logs, cancellationToken);
     }
 }

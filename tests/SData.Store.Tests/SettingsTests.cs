@@ -131,7 +131,7 @@ public class SettingsTests
     {
         using var harness = new SettingsHarness();
         var handler = new SaveS3SettingsCommandHandler(harness.Provider, new FakeSecretManager());
-        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => handler.Handle(new SaveS3SettingsCommand
+        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(async () => await handler.Handle(new SaveS3SettingsCommand
         {
             Endpoint = "http://minio:9000",
             Bucket = "sdata-cold",
@@ -157,8 +157,8 @@ public class SettingsTests
         Assert.DoesNotContain(key, (await harness.Db.Settings.SingleAsync(x => x.Key == SettingKeys.MqttAuth)).Value);
         await handler.Handle(new() { Mode = "shared", Key = "" }, default);
         Assert.Equal(saved.KeyHash, harness.Provider.GetMqttAuth().KeyHash);
-        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => handler.Handle(new() { Mode = "prefix" }, default));
-        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => handler.Handle(new() { Mode = "prefix", Key = "   " }, default));
+        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(async () => await handler.Handle(new() { Mode = "prefix" }, default));
+        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(async () => await handler.Handle(new() { Mode = "prefix", Key = "   " }, default));
         await handler.Handle(new() { Mode = "prefix", Key = key }, default);
         Assert.Equal(key.Length, harness.Provider.GetMqttAuth().PrefixLength);
         var response = await new QueryMqttAuthSettingsCommandHandler(harness.Provider).Handle(new(), default);
@@ -207,7 +207,7 @@ public class SettingsTests
         var startup = SystemSettingsProvider.TryLoadOtlpOverride(Path.Combine(harness.TempDirectory, "settings.db"));
         Assert.NotNull(startup);
         Assert.Equal("x-api-key=file-metrics", startup.MetricsHeaders);
-        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() => handler.Handle(
+        await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(async () => await handler.Handle(
             new() { TraceHeaders = "authorization=secret", ClearTraceHeaders = true }, default));
     }
 
@@ -238,8 +238,8 @@ public class SettingsTests
         var channel = await harness.Db.NotificationChannels.SingleAsync();
         channel.Enabled = false;
         await harness.Db.SaveChangesAsync();
-        var error = await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(() =>
-            handler.Handle(new SaveMqInstancesCommand { Instances = [instance] }, default));
+        var error = await Assert.ThrowsAsync<Infra.Exceptions.BusinessException>(async () =>
+            await handler.Handle(new SaveMqInstancesCommand { Instances = [instance] }, default));
         Assert.Equal(400, error.StatusCode);
     }
 

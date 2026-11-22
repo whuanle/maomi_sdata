@@ -15,7 +15,7 @@ public interface IAgentQueries
     Task<object> ExecuteAsync(string tool, AgentQuery query, CancellationToken cancellationToken);
 }
 
-public class AgentQuery : AgentSeriesQuery, MediatR.IModelValidator<AgentQuery>
+public class AgentQuery : AgentSeriesQuery, SData.Infra.Services.IModelValidator<AgentQuery>
 {
     public static new void Validate(FluentValidation.AbstractValidator<AgentQuery> validate)
     {

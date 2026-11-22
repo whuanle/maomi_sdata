@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using SData.Database;
 using SData.Infra.Exceptions;
@@ -28,7 +28,7 @@ public class SaveRumProjectCommandHandler : IRequestHandler<SaveRumProjectComman
     }
 
     /// <inheritdoc/>
-    public async Task<Simple<long>> Handle(SaveRumProjectCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Simple<long>> Handle(SaveRumProjectCommand request, CancellationToken cancellationToken)
     {
         if (!RumOrigins.TryParse(request.DomainsJson, out var origins))
         {
@@ -89,7 +89,7 @@ public class DeleteRumProjectCommandHandler : IRequestHandler<DeleteRumProjectCo
     }
 
     /// <inheritdoc/>
-    public async Task<EmptyCommandResponse> Handle(DeleteRumProjectCommand request, CancellationToken cancellationToken)
+    public async ValueTask<EmptyCommandResponse> Handle(DeleteRumProjectCommand request, CancellationToken cancellationToken)
     {
         var project = await _databaseContext.RumProjects.FirstOrDefaultAsync(x => x.Id == request.Id, cancellationToken)
             ?? throw BusinessException.Throw(404, "RUM 项目不存在");
@@ -117,7 +117,7 @@ public class QueryRumProjectsCommandHandler : IRequestHandler<QueryRumProjectsCo
     }
 
     /// <inheritdoc/>
-    public async Task<PagedResult<RumProjectItem>> Handle(QueryRumProjectsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<PagedResult<RumProjectItem>> Handle(QueryRumProjectsCommand request, CancellationToken cancellationToken)
     {
         var page = Math.Max(1, request.Page);
         var pageSize = Math.Clamp(request.PageSize, 1, 200);

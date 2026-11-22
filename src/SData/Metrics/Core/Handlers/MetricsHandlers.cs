@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Store;
 using SData.Store.Models;
 
@@ -21,7 +21,7 @@ public class QueryMetricNamesCommandHandler : IRequestHandler<QueryMetricNamesCo
     }
 
     /// <inheritdoc/>
-    public async Task<List<string>> Handle(QueryMetricNamesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<List<string>> Handle(QueryMetricNamesCommand request, CancellationToken cancellationToken)
     {
         var names = await _metricStore.ListNamesAsync(cancellationToken);
         return names.ToList();
@@ -45,7 +45,7 @@ public class QueryMetricSeriesCommandHandler : IRequestHandler<QueryMetricSeries
     }
 
     /// <inheritdoc/>
-    public async Task<QueryMetricSeriesCommandResponse> Handle(QueryMetricSeriesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<QueryMetricSeriesCommandResponse> Handle(QueryMetricSeriesCommand request, CancellationToken cancellationToken)
     {
         var response = await _metricStore.QueryRangeAsync(new MetricSeriesQuery
         {
@@ -104,8 +104,8 @@ public class SearchMetricsCommandHandler : IRequestHandler<SearchMetricsCommand,
     }
 
     /// <inheritdoc/>
-    public Task<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchMetricsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchMetricsCommand request, CancellationToken cancellationToken)
     {
-        return _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Metrics, cancellationToken);
+        return await _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Metrics, cancellationToken);
     }
 }

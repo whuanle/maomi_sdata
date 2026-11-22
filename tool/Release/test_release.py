@@ -79,17 +79,16 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue((stage / "SData.exe").is_file())
 
     def test_shipped_appsettings_has_no_ui_managed_settings(self):
-        # 有页面入口的设置只存数据库；配置文件只含控制台日志与无页面入口的参数（默认值）
+        # 有页面入口的设置只存数据库；配置文件只保留引导参数（初始管理员密码），
+        # 端口/存储路径/日志级别等全部代码默认，需要覆盖时用 configs/appsettings.json 或环境变量
         config = json.loads((REPO / "src/SData/appsettings.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(config), {"Serilog", "SData"})
-        self.assertEqual([sink["Name"] for sink in config["Serilog"]["WriteTo"]], ["Console"])
+        self.assertEqual(set(config), {"SData"})
+        self.assertEqual(set(config["SData"]), {"Auth"})
         ui_managed = {"S3", "Retention", "Compression", "OTLP", "Mq", "Kafka", "RabbitMq", "Pulsar", "EsBulk", "Mqtt"}
         self.assertFalse(ui_managed & set(config["SData"]))
-        self.assertEqual(config["SData"]["Port"], 5300)
-        self.assertEqual(config["SData"]["Ingest"]["InitialApiKey"], "")
-        # 初始管理员密码与令牌有效期只在配置文件中提供，代码里没有默认值
+        # 初始管理员密码只在配置文件中提供，代码里没有默认值；
+        # TokenExpireMinutes 代码默认 720 且已由设置页管理（SystemOptions/RuntimeSettings），不要求进配置文件
         self.assertTrue(config["SData"]["Auth"]["InitialAdminPassword"])
-        self.assertGreater(config["SData"]["Auth"]["TokenExpireMinutes"], 0)
 
     def test_archive_traversal_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

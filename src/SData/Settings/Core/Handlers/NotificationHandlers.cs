@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SData.Database;
@@ -25,7 +25,7 @@ public class NotificationService(DatabaseContext database, IIdProvider ids, Noti
         var config = configuration.Merge(command, command.Id == null ? null : configuration.Unprotect(entity.ProtectedConfig));
         using (var request = NotificationProtocols.Build(command.Type, config, new NotificationMessage()))
         {
-            transport.Validate(command.Type, request.RequestUri!);
+            transport.Validate(request.RequestUri!);
         }
 
         var name = command.Name.Trim();
@@ -77,7 +77,7 @@ public class NotificationService(DatabaseContext database, IIdProvider ids, Noti
         try
         {
             using var request = NotificationProtocols.Build(type, config, message);
-            var response = await transport.SendAsync(type, request, token);
+            var response = await transport.SendAsync(request, token);
             var success = NotificationProtocols.IsSuccess(type, (int)response.Status, response.Body);
             logger.LogInformation("通知发送完成 {ChannelType} {Success}", type, success);
             return new(success, success ? "通知已发送" : "通知服务拒绝请求，请检查渠道配置与服务配额");
@@ -122,20 +122,20 @@ public class NotificationService(DatabaseContext database, IIdProvider ids, Noti
 
 public class QueryNotificationChannelsHandler(NotificationService service) : IRequestHandler<QueryNotificationChannelsCommand, List<NotificationChannelItem>>
 {
-    public Task<List<NotificationChannelItem>> Handle(QueryNotificationChannelsCommand request, CancellationToken cancellationToken) => service.QueryAsync(cancellationToken);
+    public async ValueTask<List<NotificationChannelItem>> Handle(QueryNotificationChannelsCommand request, CancellationToken cancellationToken) => await service.QueryAsync(cancellationToken);
 }
 
 public class SaveNotificationChannelHandler(NotificationService service) : IRequestHandler<SaveNotificationChannelCommand, NotificationChannelItem>
 {
-    public Task<NotificationChannelItem> Handle(SaveNotificationChannelCommand request, CancellationToken cancellationToken) => service.SaveAsync(request, cancellationToken);
+    public async ValueTask<NotificationChannelItem> Handle(SaveNotificationChannelCommand request, CancellationToken cancellationToken) => await service.SaveAsync(request, cancellationToken);
 }
 
 public class DeleteNotificationChannelHandler(NotificationService service) : IRequestHandler<DeleteNotificationChannelCommand, bool>
 {
-    public Task<bool> Handle(DeleteNotificationChannelCommand request, CancellationToken cancellationToken) => service.DeleteAsync(request, cancellationToken);
+    public async ValueTask<bool> Handle(DeleteNotificationChannelCommand request, CancellationToken cancellationToken) => await service.DeleteAsync(request, cancellationToken);
 }
 
 public class TestNotificationChannelHandler(NotificationService service) : IRequestHandler<TestNotificationChannelCommand, NotificationSendResult>
 {
-    public Task<NotificationSendResult> Handle(TestNotificationChannelCommand request, CancellationToken cancellationToken) => service.TestAsync(request, cancellationToken);
+    public async ValueTask<NotificationSendResult> Handle(TestNotificationChannelCommand request, CancellationToken cancellationToken) => await service.TestAsync(request, cancellationToken);
 }

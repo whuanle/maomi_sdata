@@ -1,10 +1,10 @@
 using FluentValidation;
 
-namespace MediatR;
+namespace SData.Infra.Services;
 
 /// <summary>
 /// 模型验证接口：请求模型实现该接口，在 Validate 中声明 FluentValidation 规则.
-/// 由 InfraCoreModule 自动注册为 IValidator&lt;T&gt;，MVC 自动验证管线调用.
+/// 由 InfraCoreModule 自动注册为 IValidator&lt;T&gt;，MediatorPipelineBehavior 管线调用.
 /// </summary>
 /// <typeparam name="T">模型类型.</typeparam>
 public interface IModelValidator<T>

@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Store.Models;
 
 namespace SData.Monitor;

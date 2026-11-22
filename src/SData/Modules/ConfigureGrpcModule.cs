@@ -7,13 +7,23 @@ using SData.Ingest.OtlpGrpc;
 namespace SData;
 
 /// <summary>
-/// gRPC 与通用附加监听配置（T112/C4）：
-/// AddGrpc + OTLP gRPC 三服务注册；SData:Listeners:[{Port,Protocol:http|grpc}] 通用附加端口
-/// （4317/4318/9200 全部由此实现，grpc=纯 HTTP/2，http=HTTP/1+2）；显式 Listen 主端口与附加端口
-/// （Kestrel 存在显式 Listen 时 UseUrls 失效，故主端口在此一并 Listen）.
+/// gRPC 与内置标准端口（T112/C4）：
+/// AddGrpc + OTLP gRPC 三服务注册；标准采集端口内置固化、不可配置——
+/// 4317=OTLP gRPC（纯 HTTP/2，明文 h2c 下 Http1AndHttp2 实际只服务 HTTP/1，故须显式标记）、
+/// 4318=OTLP HTTP/protobuf、9200=Elasticsearch _bulk 兼容（与 /v1/*、/_bulk 路由共享同一应用），
+/// 主端口一并显式 Listen（Kestrel 存在显式 Listen 时 UseUrls 失效）.
 /// </summary>
 public class ConfigureGrpcModule : IModule
 {
+    /// <summary>OTLP gRPC 标准端口（纯 HTTP/2）.</summary>
+    public const int OtlpGrpcPort = 4317;
+
+    /// <summary>OTLP HTTP/protobuf 标准端口.</summary>
+    public const int OtlpHttpPort = 4318;
+
+    /// <summary>Elasticsearch _bulk 兼容标准端口.</summary>
+    public const int EsBulkPort = 9200;
+
     private readonly IConfiguration _configuration;
 
     /// <summary>
@@ -37,38 +47,35 @@ public class ConfigureGrpcModule : IModule
         context.Services.AddScoped<OtlpGrpcMetricsService>();
 
         var mainPort = _configuration.GetValue("SData:Port", 5300);
-        var listeners = _configuration.GetSection("SData:Listeners").Get<List<IngestListenerOptions>>() ?? new List<IngestListenerOptions>();
-        context.Services.Configure<KestrelServerOptions>(options => ApplyListeners(options, mainPort, listeners));
+        context.Services.Configure<KestrelServerOptions>(options => ApplyListeners(options, mainPort));
     }
 
     /// <summary>
-    /// 应用监听配置：主端口（HTTP/1+2）+ 附加端口（按协议标记）.
-    /// 抽为静态函数便于单元测试.
+    /// 应用监听：主端口（HTTP/1+2）+ 内置标准端口 4317/4318/9200.
+    /// 抽为静态函数便于单元测试；别名端口可注入以便测试避开固定端口冲突.
     /// </summary>
     /// <param name="options">Kestrel 配置.</param>
-    /// <param name="mainPort">主端口（SData:Port）.</param>
-    /// <param name="listeners">附加监听列表（SData:Listeners）.</param>
-    public static void ApplyListeners(KestrelServerOptions options, int mainPort, List<IngestListenerOptions> listeners)
+    /// <param name="mainPort">主端口（SData:Port，默认 5300）.</param>
+    /// <param name="otlpGrpcPort">OTLP gRPC 端口（默认 4317）.</param>
+    /// <param name="otlpHttpPort">OTLP HTTP 端口（默认 4318）.</param>
+    /// <param name="esBulkPort">ES _bulk 端口（默认 9200）.</param>
+    public static void ApplyListeners(KestrelServerOptions options, int mainPort, int otlpGrpcPort = OtlpGrpcPort, int otlpHttpPort = OtlpHttpPort, int esBulkPort = EsBulkPort)
     {
         options.ListenAnyIP(mainPort, listenOptions => listenOptions.Protocols = HttpProtocols.Http1AndHttp2);
-        foreach (var listener in listeners)
+        // 与主端口重叠时跳过（用户把 SData:Port 指到标准端口时的兜底，避免重复绑定启动报错）
+        if (otlpGrpcPort != mainPort)
         {
-            var protocols = string.Equals(listener.Protocol, "grpc", StringComparison.OrdinalIgnoreCase)
-                ? HttpProtocols.Http2
-                : HttpProtocols.Http1AndHttp2;
-            options.ListenAnyIP(listener.Port, listenOptions => listenOptions.Protocols = protocols);
+            options.ListenAnyIP(otlpGrpcPort, listenOptions => listenOptions.Protocols = HttpProtocols.Http2);
+        }
+
+        if (otlpHttpPort != mainPort)
+        {
+            options.ListenAnyIP(otlpHttpPort, listenOptions => listenOptions.Protocols = HttpProtocols.Http1AndHttp2);
+        }
+
+        if (esBulkPort != mainPort)
+        {
+            options.ListenAnyIP(esBulkPort, listenOptions => listenOptions.Protocols = HttpProtocols.Http1AndHttp2);
         }
     }
-}
-
-/// <summary>
-/// 附加监听项（C4：SData:Listeners）.
-/// </summary>
-public class IngestListenerOptions
-{
-    /// <summary>监听端口.</summary>
-    public int Port { get; set; }
-
-    /// <summary>协议标记：http | grpc.</summary>
-    public string Protocol { get; set; } = "http";
 }

@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using SData.Auth.Services;
 using SData.Database;
@@ -31,7 +31,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginCommandRes
     }
 
     /// <inheritdoc/>
-    public async Task<LoginCommandResponse> Handle(LoginCommand request, CancellationToken cancellationToken)
+    public async ValueTask<LoginCommandResponse> Handle(LoginCommand request, CancellationToken cancellationToken)
     {
         var user = await _databaseContext.Users
             .Where(x => x.Username == request.Username)
@@ -73,7 +73,7 @@ public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordComman
     }
 
     /// <inheritdoc/>
-    public async Task<Infra.Models.EmptyCommandResponse> Handle(ChangePasswordCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Infra.Models.EmptyCommandResponse> Handle(ChangePasswordCommand request, CancellationToken cancellationToken)
     {
         var user = await _databaseContext.Users
             .Where(x => x.Id == request.ContextUserId)
@@ -107,7 +107,7 @@ public class QueryCurrentUserCommandHandler : IRequestHandler<QueryCurrentUserCo
     }
 
     /// <inheritdoc/>
-    public async Task<CurrentUserModel> Handle(QueryCurrentUserCommand request, CancellationToken cancellationToken)
+    public async ValueTask<CurrentUserModel> Handle(QueryCurrentUserCommand request, CancellationToken cancellationToken)
     {
         var user = await _databaseContext.Users
             .Where(x => x.Id == request.ContextUserId)
@@ -144,7 +144,7 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, Infra
     }
 
     /// <inheritdoc/>
-    public async Task<Infra.Models.Simple<long>> Handle(CreateUserCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Infra.Models.Simple<long>> Handle(CreateUserCommand request, CancellationToken cancellationToken)
     {
         if (request.Role == SDataRoles.Admin)
         {
@@ -187,7 +187,7 @@ public class DeleteUserCommandHandler : IRequestHandler<DeleteUserCommand, Infra
     }
 
     /// <inheritdoc/>
-    public async Task<Infra.Models.EmptyCommandResponse> Handle(DeleteUserCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Infra.Models.EmptyCommandResponse> Handle(DeleteUserCommand request, CancellationToken cancellationToken)
     {
         if (request.UserId == request.ContextUserId)
         {
@@ -228,7 +228,7 @@ public class ResetUserPasswordCommandHandler : IRequestHandler<ResetUserPassword
     }
 
     /// <inheritdoc/>
-    public async Task<Infra.Models.EmptyCommandResponse> Handle(ResetUserPasswordCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Infra.Models.EmptyCommandResponse> Handle(ResetUserPasswordCommand request, CancellationToken cancellationToken)
     {
         var user = await _databaseContext.Users
             .Where(x => x.Id == request.UserId)
@@ -257,7 +257,7 @@ public class UpdateUserRoleCommandHandler : IRequestHandler<UpdateUserRoleComman
     }
 
     /// <inheritdoc/>
-    public async Task<Infra.Models.EmptyCommandResponse> Handle(UpdateUserRoleCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Infra.Models.EmptyCommandResponse> Handle(UpdateUserRoleCommand request, CancellationToken cancellationToken)
     {
         var user = await _databaseContext.Users
             .Where(x => x.Id == request.UserId)
@@ -291,7 +291,7 @@ public class QueryUsersCommandHandler : IRequestHandler<QueryUsersCommand, Infra
     }
 
     /// <inheritdoc/>
-    public async Task<Infra.Models.PagedResult<UserItem>> Handle(QueryUsersCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Infra.Models.PagedResult<UserItem>> Handle(QueryUsersCommand request, CancellationToken cancellationToken)
     {
         var page = Math.Max(1, request.Page);
         var pageSize = Math.Clamp(request.PageSize, 1, 200);

@@ -1,5 +1,5 @@
 using global::Xunit;
-using MediatR;
+using Mediator;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using SData.Monitor.Api;
@@ -33,10 +33,11 @@ public class MonitorControllerTests
             },
         };
         using var services = new ServiceCollection()
+            .AddMediator()
             .AddSingleton<IRequestHandler<QueryStatusCommand, StatusResponse>>(new StatusHandler())
             .BuildServiceProvider();
         var performance = new PerformanceMetrics();
-        var controller = new MonitorController(new Mediator(services), null!, storage, performance);
+        var controller = new MonitorController(new global::Mediator.Mediator(services), null!, storage, performance);
 
         var metrics = await controller.Metrics(CancellationToken.None);
         Assert.Contains("sdata_duckdb_tracked_memory_bytes 1234\n", metrics);
@@ -70,8 +71,8 @@ public class MonitorControllerTests
 
     private sealed class StatusHandler : IRequestHandler<QueryStatusCommand, StatusResponse>
     {
-        public Task<StatusResponse> Handle(QueryStatusCommand request, CancellationToken cancellationToken)
-            => Task.FromResult(new StatusResponse());
+        public ValueTask<StatusResponse> Handle(QueryStatusCommand request, CancellationToken cancellationToken)
+            => ValueTask.FromResult(new StatusResponse());
     }
 
     private sealed class StorageMetrics : IStorageMetrics

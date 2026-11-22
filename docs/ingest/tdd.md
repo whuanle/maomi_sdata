@@ -25,7 +25,7 @@
 | @INGEST-ES6 | Filebeat 直推 e2e | e2e 待集成窗（需外部 Filebeat，见 configs/filebeat-example.yml） |
 | @INGEST-G1 | `OtlpGrpcIntegrationTests.Export_ThreeServices_EnqueueRecords`（进程内 Kestrel h2c + GrpcChannel 三通道） | 通过（2026-11-15，Ingest.Tests 25/25） |
 | @INGEST-G2 | `OtlpGrpcIntegrationTests.Export_BufferFull_ReportsPartialSuccess` | 通过（2026-11-15） |
-| @INGEST-G3 | `OtlpGrpcIntegrationTests.Listeners_GrpcPort_ServesGrpc`（ApplyListeners grpc 端口 h2c） | 通过（2026-11-15） |
+| @INGEST-G3 | `OtlpGrpcIntegrationTests.BuiltinGrpcPort_ServesGrpc`（ApplyListeners 内置 4317 端口 h2c） | 通过（2026-11-15） |
 | @INGEST-G4 | OTel Collector gRPC 直连 e2e | e2e 待集成窗（见 configs/otel-collector-example.yaml） |
 | @INGEST-AUTH1 | `IngestApiKeyFilterTests`（三态提取 6 例 + 401/放行语义） | 通过（2026-11-15） |
 | @INGEST-MQ1 | `MqLogDecoderTests`（otlp-proto/otlp-json/json/raw + json 字段映射、来源打标、RFC3339 嗅探） | 通过（2026-11-17，Ingest.Tests 64/64） |

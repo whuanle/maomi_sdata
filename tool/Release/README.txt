@@ -12,10 +12,9 @@ Change it in the UI after the first sign-in, and use unique credentials and TLS 
 exposing the service outside localhost.
 
 Configuration:
-  appsettings.json          console logging, plus settings that have no page in the web UI
-                            (HTTP port, data paths, DuckDB resources, initial admin password,
-                            ingest buffer, alert and agent budgets, listeners, origin lists).
-                            Every value has a built-in default.
+  appsettings.json          bootstrap settings only: the initial admin password.
+                            Ports, storage paths, log levels and other technical
+                            defaults are built into the program.
   configs/appsettings.json  created on first start as a copy of appsettings.json, only when
                             missing. Edit it to override any value above. Not in this package.
   environment variables     highest priority, using "__" for nested keys, for example
@@ -24,7 +23,8 @@ Configuration:
                             OTLP, log consumption, DuckDB memory limit, notification
                             channels, RUM sites, API keys) are configured in the UI and
                             stored in the database. Saved values take precedence.
-Logs are written to the console only.
+Logs are written to the console only. Log level is Information in debug builds and
+Warning in release builds; override with the Serilog section or SData__Serilog__*.
 
 Runtime state is created beside the executable and must stay writable:
   data/                     SQLite (sdata.db) and DuckDB (sdata.duckdb)
@@ -34,8 +34,10 @@ binaries into a NEW folder, copy data/, configs/rsa_private.key and any
 configs/appsettings.json over, then start. Never overlay a running instance. Keep the
 environment variables you set for the old service.
 
-HTTP listens on SData:Port (5300 by default). The embedded MQTT broker listens on 1883;
-set SData__Mqtt__Port to change it.
+HTTP listens on SData:Port (5300 by default). Standard ingest ports are built in and
+always on: 4317 (OTLP gRPC), 4318 (OTLP HTTP/protobuf) and 9200 (Elasticsearch _bulk),
+so collectors can target SData with zero configuration. The embedded MQTT broker
+listens on 1883; set SData__Mqtt__Port to change it.
 
 Linux archives require a glibc-based .NET 10-supported distribution and its
 system dependencies (ICU, OpenSSL, zlib, libc/libgcc/libstdc++). Alpine/musl is not

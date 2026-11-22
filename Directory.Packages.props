@@ -8,8 +8,9 @@
 		<!-- Module framework (Maomi) -->
 		<PackageVersion Include="Maomi.Core" Version="2.3.0" />
 
-		<!-- CQRS / validation -->
-		<PackageVersion Include="MediatR" Version="12.5.0" />
+		<!-- CQRS / validation（Mediator 为源生成器实现，Abstractions 运行时 + SourceGenerator 编译期） -->
+		<PackageVersion Include="Mediator.Abstractions" Version="3.0.2" />
+		<PackageVersion Include="Mediator.SourceGenerator" Version="3.0.2" />
 		<PackageVersion Include="FluentValidation" Version="12.2.0" />
 
 		<!-- Data access -->

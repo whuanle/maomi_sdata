@@ -1,7 +1,6 @@
 using System.Text;
 using global::Xunit;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SData.Database;
 using SData.Database.Entities;
@@ -33,7 +32,7 @@ public class RumOriginPolicyTests : IDisposable
             new RumProjectEntity { Id = 2, ProjectKey = "rum_empty", Name = "empty", DomainsJson = "[]" },
             new RumProjectEntity { Id = 3, ProjectKey = "rum_legacy", Name = "legacy", DomainsJson = "[\"app.example.com\"]" });
         db.SaveChanges();
-        _policy = new RumOriginPolicy(_services.GetRequiredService<IServiceScopeFactory>(), new ConfigurationBuilder().Build());
+        _policy = new RumOriginPolicy(_services.GetRequiredService<IServiceScopeFactory>());
     }
 
     [Theory]
@@ -57,13 +56,8 @@ public class RumOriginPolicyTests : IDisposable
     public void UnconfiguredProjectsDenied(string key) => Assert.False(_policy.Allows(key, "https://app.example.com"));
 
     [Fact]
-    public void DeletionAndGlobalLimitTakeEffect()
+    public void DeletionTakesEffect()
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["SData:Rum:CorsOrigins:0"] = "https://other.example.com",
-        }).Build();
-        Assert.False(new RumOriginPolicy(_services.GetRequiredService<IServiceScopeFactory>(), configuration).Allows("rum_demo", "https://app.example.com"));
         Assert.True(_policy.AllowsAny("https://app.example.com"));
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DatabaseContext>();

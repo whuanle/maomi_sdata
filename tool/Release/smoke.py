@@ -74,12 +74,12 @@ def main():
         folders = list(target.iterdir())
         assert len(folders) == 1 and folders[0].is_dir()
         home = folders[0]
-        # 包内没有 configs 目录与启动脚本；appsettings.json 只含控制台日志与无页面入口的参数
+        # 包内没有 configs 目录与启动脚本；appsettings.json 只含初始管理员密码（无页面入口的引导参数）
         assert not (home / "configs").exists()
         assert not list(home.glob("start.*"))
         settings_path = home / "appsettings.json"
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        assert set(settings) == {"Serilog", "SData"} and "Port" in settings["SData"], settings
+        assert set(settings) == {"SData"} and set(settings["SData"]) == {"Auth"}, settings
         # 初始管理员密码只来自 appsettings.json：程序中没有内置默认值
         password = settings["SData"]["Auth"]["InitialAdminPassword"]
         assert password, "appsettings.json must provide the initial admin password"

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
-import { Cloud, Database, History, Package, RefreshCw, Send, Trash2, Users } from 'lucide-react';
+import { Cloud, Database, History, Package, RefreshCw, Send, Settings2, Trash2, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useForm } from 'react-hook-form';
 import {
@@ -42,10 +42,11 @@ import { isAdminRole, useAuthStore } from '@/store/auth';
 import { MembersPanel } from './MembersPanel';
 import { ApiAgentsPanel } from './ApiAgentsPanel';
 import { NotificationChannelsPanel } from './NotificationChannelsPanel';
+import { StartupConfigPanel } from './StartupConfigPanel';
 
 /** 合法 tab key（members 全员可见；其余仅管理员；MQ 日志源已独立为「日志消费」页）. */
-const TAB_KEYS = ['members', 'duckdb', 's3', 'retention', 'compression', 'otlp', 'notifications', 'agents'] as const;
-const ADMIN_ONLY_TABS = new Set<string>(['duckdb', 's3', 'retention', 'compression', 'otlp', 'notifications', 'agents']);
+const TAB_KEYS = ['members', 'startup', 'duckdb', 's3', 'retention', 'compression', 'otlp', 'notifications', 'agents'] as const;
+const ADMIN_ONLY_TABS = new Set<string>(['startup', 'duckdb', 's3', 'retention', 'compression', 'otlp', 'notifications', 'agents']);
 
 /** 系统设置页：顶部 tab 导航（成员全员可见 + 管理员设置 tab：通知渠道/S3 冷存储/三段保留/数据压缩/OTLP）；后端授权是权威. */
 export function SettingsPage() {
@@ -105,6 +106,10 @@ export function SettingsPage() {
                 <Send className="size-3.5" aria-hidden />
                 {t('notifications.tab')}
               </TabsTrigger>
+              <TabsTrigger value="startup" className="inline-flex items-center gap-1.5">
+                <Settings2 className="size-3.5" aria-hidden />
+                {t('settings.tabStartup')}
+              </TabsTrigger>
               <TabsTrigger value="duckdb" className="inline-flex items-center gap-1.5">
                 <Database className="size-3.5" aria-hidden />
                 {t('settings.tabDuckDb')}
@@ -153,6 +158,9 @@ export function SettingsPage() {
 
         {viewerIsAdmin && settings && (
           <>
+            <TabsContent value="startup">
+              <StartupConfigPanel startup={settings.startup} onRetry={() => void loadSettings()} />
+            </TabsContent>
             <TabsContent value="duckdb">
               {settings.duckDb && typeof settings.duckDb.memoryLimit === 'string' && typeof settings.duckDb.effectiveMemoryLimit === 'string' ? (
                 <DuckDbCard initial={settings.duckDb} onSaved={(duckDb) => setSettings((current) => current ? { ...current, duckDb } : current)} />

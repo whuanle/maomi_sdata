@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using MediatR;
+using Mediator;
 using SData.Infra.Configuration;
 using SData.Store;
 using SData.Settings;
@@ -34,7 +34,7 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
     }
 
     /// <inheritdoc/>
-    public async Task<StatusResponse> Handle(QueryStatusCommand request, CancellationToken cancellationToken)
+    public async ValueTask<StatusResponse> Handle(QueryStatusCommand request, CancellationToken cancellationToken)
     {
         using var process = Process.GetCurrentProcess();
         var response = new StatusResponse

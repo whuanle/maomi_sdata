@@ -9,7 +9,7 @@ public interface IAgentAnalysis
     Task<AgentResult> ExecuteAsync(string tool, AgentRequest query, CancellationToken cancellationToken);
 }
 
-public class AgentRequest : MediatR.IModelValidator<AgentRequest>
+public class AgentRequest : SData.Infra.Services.IModelValidator<AgentRequest>
 {
     [Description("Inclusive UTC start; defaults to 15 minutes before to. Each window is at most 24 hours.")]
     public DateTimeOffset? From { get; set; }
@@ -47,7 +47,7 @@ public static class AgentValidation
     }
 }
 
-public class AgentTableQuery : AgentRequest, MediatR.IModelValidator<AgentTableQuery>
+public class AgentTableQuery : AgentRequest, SData.Infra.Services.IModelValidator<AgentTableQuery>
 {
     [Description("Optional logical domain: logs, traces, metrics, iot, sessions, rum_events.")]
     public string? Domain { get; set; }
@@ -87,7 +87,7 @@ public class AgentSort
     public bool Descending { get; set; } = true;
 }
 
-public class AgentDataQuery : AgentRequest, MediatR.IModelValidator<AgentDataQuery>
+public class AgentDataQuery : AgentRequest, SData.Infra.Services.IModelValidator<AgentDataQuery>
 {
     [Description("Logical data source from list_data_sources; never a physical table or SQL.")]
     public string Domain { get; set; } = "logs";
@@ -104,7 +104,7 @@ public class AgentDataQuery : AgentRequest, MediatR.IModelValidator<AgentDataQue
     public static new void Validate(AbstractValidator<AgentDataQuery> validate) => AgentValidation.Data(validate);
 }
 
-public class AgentFieldQuery : AgentDataQuery, MediatR.IModelValidator<AgentFieldQuery>
+public class AgentFieldQuery : AgentDataQuery, SData.Infra.Services.IModelValidator<AgentFieldQuery>
 {
     public string Field { get; set; } = "service";
     public static new void Validate(AbstractValidator<AgentFieldQuery> validate)
@@ -114,7 +114,7 @@ public class AgentFieldQuery : AgentDataQuery, MediatR.IModelValidator<AgentFiel
     }
 }
 
-public class AgentCompareQuery : AgentDataQuery, MediatR.IModelValidator<AgentCompareQuery>
+public class AgentCompareQuery : AgentDataQuery, SData.Infra.Services.IModelValidator<AgentCompareQuery>
 {
     [Description("Required baseline start. Both windows must have equal duration and be at most 24 hours.")]
     public DateTimeOffset BaselineFrom { get; set; }
@@ -126,7 +126,7 @@ public class AgentCompareQuery : AgentDataQuery, MediatR.IModelValidator<AgentCo
     }
 }
 
-public class AgentSeriesQuery : AgentRequest, MediatR.IModelValidator<AgentSeriesQuery>
+public class AgentSeriesQuery : AgentRequest, SData.Infra.Services.IModelValidator<AgentSeriesQuery>
 {
     public string? Metric { get; set; }
     [Description("Safe label filters only: service.name, service_name, host.name, environment, deployment.environment, job, instance, unit.")]
@@ -147,7 +147,7 @@ public class AgentSeriesQuery : AgentRequest, MediatR.IModelValidator<AgentSerie
     }
 }
 
-public class AgentRumQuery : AgentRequest, MediatR.IModelValidator<AgentRumQuery>
+public class AgentRumQuery : AgentRequest, SData.Infra.Services.IModelValidator<AgentRumQuery>
 {
     public string Project { get; set; } = "";
     public static new void Validate(AbstractValidator<AgentRumQuery> validate)

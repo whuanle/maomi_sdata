@@ -223,7 +223,7 @@ describe('SettingsPage', () => {
     vi.mocked(fetchSettings).mockImplementationOnce(() => new Promise((resolve) => { resolveSettings = resolve; }));
     render(<MemoryRouter initialEntries={['/settings?tab=s3']}><SettingsPage /></MemoryRouter>);
 
-    expect(screen.getAllByRole('tab')).toHaveLength(8);
+    expect(screen.getAllByRole('tab')).toHaveLength(9);
     expect(screen.getByRole('tab', { name: /冷存储 S3|Cold Storage S3/ })).toHaveAttribute('data-state', 'active');
     expect(screen.getByRole('status')).toBeTruthy();
     resolveSettings(settings);
@@ -235,7 +235,7 @@ describe('SettingsPage', () => {
     render(<MemoryRouter initialEntries={['/settings?tab=s3']}><SettingsPage /></MemoryRouter>);
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/设置加载失败|Unable to load settings/);
-    expect(screen.getAllByRole('tab')).toHaveLength(8);
+    expect(screen.getAllByRole('tab')).toHaveLength(9);
     expect(screen.getByRole('tab', { name: /冷存储 S3|Cold Storage S3/ })).toHaveAttribute('data-state', 'active');
     fireEvent.mouseDown(screen.getByRole('tab', { name: /通知渠道|Notification channels/ }));
     expect(await screen.findByText('Telegram Bot')).toBeTruthy();

@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Infra.Models;

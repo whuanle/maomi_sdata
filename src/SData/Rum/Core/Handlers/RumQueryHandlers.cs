@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Rum.Models;
 using SData.Store;
 
@@ -21,7 +21,7 @@ public class QueryRumPerformanceCommandHandler : IRequestHandler<QueryRumPerform
     }
 
     /// <inheritdoc/>
-    public async Task<RumPerformanceResponse> Handle(QueryRumPerformanceCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RumPerformanceResponse> Handle(QueryRumPerformanceCommand request, CancellationToken cancellationToken)
     {
         var aggregates = await _rumStore.AggregatePerformanceAsync(request.ProjectKey, request.From, request.To, cancellationToken);
         return new RumPerformanceResponse
@@ -50,7 +50,7 @@ public class QueryRumErrorsCommandHandler : IRequestHandler<QueryRumErrorsComman
     }
 
     /// <inheritdoc/>
-    public async Task<RumErrorsResponse> Handle(QueryRumErrorsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RumErrorsResponse> Handle(QueryRumErrorsCommand request, CancellationToken cancellationToken)
     {
         var items = await _rumStore.AggregateErrorsAsync(request.ProjectKey, request.From, request.To, request.TopN, cancellationToken);
         return new RumErrorsResponse { Items = [.. items] };
@@ -74,7 +74,7 @@ public class QueryRumSessionsCommandHandler : IRequestHandler<QueryRumSessionsCo
     }
 
     /// <inheritdoc/>
-    public async Task<RumSessionsResponse> Handle(QueryRumSessionsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RumSessionsResponse> Handle(QueryRumSessionsCommand request, CancellationToken cancellationToken)
     {
         var items = await _rumStore.ListSessionsAsync(request.ProjectKey, request.From, request.To, request.Limit, cancellationToken);
         return new RumSessionsResponse { Items = [.. items] };
@@ -98,7 +98,7 @@ public class QueryRumReplayCommandHandler : IRequestHandler<QueryRumReplayComman
     }
 
     /// <inheritdoc/>
-    public async Task<RumReplayResponse> Handle(QueryRumReplayCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RumReplayResponse> Handle(QueryRumReplayCommand request, CancellationToken cancellationToken)
     {
         var chunks = await _rumStore.GetReplayAsync(request.ProjectKey, request.SessionId, request.From, request.To, cancellationToken);
         return new RumReplayResponse { SessionId = request.SessionId, Chunks = [.. chunks] };
@@ -122,7 +122,7 @@ public class QueryRumHeatmapCommandHandler : IRequestHandler<QueryRumHeatmapComm
     }
 
     /// <inheritdoc/>
-    public async Task<RumHeatmapResponse> Handle(QueryRumHeatmapCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RumHeatmapResponse> Handle(QueryRumHeatmapCommand request, CancellationToken cancellationToken)
     {
         var pagePath = string.IsNullOrWhiteSpace(request.PagePath) ? null : request.PagePath;
         var aggregates = await _rumStore.AggregateHeatmapAsync(request.ProjectKey, request.From, request.To, request.GridCells, pagePath, cancellationToken);
@@ -152,7 +152,7 @@ public class QueryRumSitemapCommandHandler : IRequestHandler<QueryRumSitemapComm
     }
 
     /// <inheritdoc/>
-    public async Task<RumSitemapResponse> Handle(QueryRumSitemapCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RumSitemapResponse> Handle(QueryRumSitemapCommand request, CancellationToken cancellationToken)
     {
         var pages = await _rumStore.AggregatePageTreeAsync(request.ProjectKey, request.From, request.To, request.Limit, cancellationToken);
         return new RumSitemapResponse { Items = [.. pages] };

@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using MediatR;
+using Mediator;
 using SData.Infra.Models;
 using SData.Infra.Services;
 using SData.Store;

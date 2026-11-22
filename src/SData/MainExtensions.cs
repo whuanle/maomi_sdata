@@ -33,6 +33,16 @@ public static class MainExtensions
 
         builder.Services.AddSerilog((services, loggerConfiguration) =>
         {
+            // 日志级别代码默认：Debug 构建 Information、Release 构建 Warning，控制台输出；
+            // 配置文件中的 Serilog 节（configs/appsettings.json）或环境变量仍可覆盖默认值.
+#if DEBUG
+            loggerConfiguration.MinimumLevel.Information();
+#else
+            loggerConfiguration.MinimumLevel.Warning();
+#endif
+            loggerConfiguration.MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning);
+            loggerConfiguration.WriteTo.Console();
+
             // 单文件发布下 Serilog 无法靠扫描磁盘目录发现 sink 程序集，需显式声明，
             // 否则 ReadFrom.Configuration 抛 "no Serilog:Using ... published as single-file"。日志只输出到控制台。
             var sinkOptions = new ConfigurationReaderOptions(typeof(ConsoleLoggerConfigurationExtensions).Assembly);
@@ -71,7 +81,8 @@ public static class MainExtensions
     }
 
     /// <summary>
-    /// 加载 configs/appsettings.json（可选）覆盖程序目录的 appsettings.json；优先级仍低于环境变量与命令行参数.
+    /// 加载 configs/appsettings.json 与 configs/system.json（均可选）覆盖程序目录的 appsettings.json；
+    /// system.json 是推荐的可调项覆盖文件（设置页「启动配置」页签提供模板与当前生效值），优先级仍低于环境变量与命令行参数.
     /// </summary>
     /// <param name="builder">构建器.</param>
     private static void AddConfigsOverride(WebApplicationBuilder builder)
@@ -86,12 +97,16 @@ public static class MainExtensions
 
         var configuration = builder.Configuration;
         configuration.AddJsonFile(new PhysicalFileProvider(directory), "appsettings.json", optional: true, reloadOnChange: false);
+        configuration.AddJsonFile(new PhysicalFileProvider(directory), AppConst.SystemOptionsFile, optional: true, reloadOnChange: false);
 
-        // 新源追加在末尾，移到最后一个环境变量源之前：appsettings.json < configs/appsettings.json < 环境变量 < 命令行
+        // 新源追加在末尾，移到最后一个环境变量源之前：appsettings.json < configs/appsettings.json < configs/system.json < 环境变量 < 命令行
         var sources = configuration.Sources;
-        var added = sources[sources.Count - 1];
+        var added = new List<IConfigurationSource> { sources[sources.Count - 2], sources[sources.Count - 1] };
         sources.RemoveAt(sources.Count - 1);
-        sources.Insert(sources.IndexOf(sources.Last(source => source is EnvironmentVariablesConfigurationSource)), added);
+        sources.RemoveAt(sources.Count - 1);
+        var index = sources.IndexOf(sources.Last(source => source is EnvironmentVariablesConfigurationSource));
+        sources.Insert(index, added[0]);
+        sources.Insert(index + 1, added[1]);
     }
 
     /// <summary>

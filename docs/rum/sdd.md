@@ -21,7 +21,7 @@
 - 端点：`MapHub<RumLiveHub>("/hub/rum")`（宿主 MainExtensions，AddSignalR 在 ConfigureSignalRModule）
 - 探针：握手 query `?projectKey=`，`SendClick` → IRumLivePublisher（入 IIngestBuffer 走既有 DuckDB 批量落库链路 + 广播），返回 false 表示缓冲满（SDK 回落批量通道）
 - 管理端：JWT 经 query `access_token`（ConfigureAuthorizaModule OnMessageReceived 仅对 /hub 前缀放行），`Subscribe(projectKey)` 校验已认证后加入 view:{projectKey} 组收 `click` 推送
-- 来源保护：`RumOriginPolicy` 按项目 `DomainsJson` 精确校验完整 HTTP/HTTPS Origin，空列表/未知/删除项目拒绝采集；可选 `SData:Rum:CorsOrigins` 为额外全局上限。Origin 优先，仅缺失时回退 Referer，不信任事件 domain。
+- 来源保护：`RumOriginPolicy` 按项目 `DomainsJson` 精确校验完整 HTTP/HTTPS Origin，空列表/未知/删除项目拒绝采集；无全局上限配置。Origin 优先，仅缺失时回退 Referer，不信任事件 domain。
 - CORS 仅作用于公开 RUM 端点与 Hub；预检按允许站点集合，实际请求按目标项目再校验。WebSocket 握手独立校验，SendClick 每次重新检查；管理端保留认证同源订阅。脚本公开，来源限制不是认证。
 
 ## 图表探索接入
@@ -53,8 +53,7 @@
 - `go/internal/store/rum.go` 复用总行数/字节预算、后台批量 Appender、关闭排空和统计；按事件 UTC 日期写入与 C# 相同列顺序的三个天表族。请求线程不执行 DuckDB 写入。
 - 查询全部绑定项目、时间、分页、路径和会话参数；窗口最多 30 天，事件最多 1000 条；会话搜索合并三族数据。保留普通 sessions 旧响应口径，完整摘要使用 sessions/search。
 - 启动经 `initializeRum`（生产者启动前），路由绑定 `handleRum*`；共享表名解析接受三类 RUM 域，供分析搜索使用。运行说明见 [sop](sop.md)。
-- `SData:Rum:CorsOrigins` 为可选全局上限，config/beacon/预检都与项目来源取交集；空列表不另设上限，非空且全部非法时拒绝所有来源。错误项目来源拒绝使用并记录项目键，不输出原始配置。
-- `go/internal/rum/live*.go` 实现 SignalR JSON/WebSockets：协商只广告 WebSockets/Text，支持记录分隔符握手、Subscribe/Unsubscribe/SendClick、完成/错误、心跳与关闭；不实现 SSE、Long Polling、MessagePack 或流式 Hub 方法。
+- RUM 来源校验无全局上限配置：config/beacon/预检都只按目标项目来源校验。错误项目来源拒绝使用并记录项目键，不输出原始配置。
 - 管理连接要求有效 JWT（Bearer 或 access_token）且同源；探针握手与每次 SendClick 按项目和全局来源复检。强制使用握手项目，缺 sessionId 用连接 id，缺时间用接收时间。直接点击在背压时仍广播并返回 false；beacon 只对已接受记录广播，不重复入队。
 - 连接与待协商各最多 1024；协商令牌一次性、30 秒过期并绑定项目/来源/身份；每订阅者队列 64 条、最多订阅 128 项目，消息限 128 KiB，写超时 5 秒、握手 10 秒、读空闲 45 秒、心跳 15 秒。慢订阅者断开，不阻塞摄取；宿主取消和 Close 释放所有连接。
 - `RumSource` 复用共享 `DayTables` 的一次有界目录查询。旧 `/sessions` 的额外摘要字段保留 C# 默认值，非实时状态估计；需要计数使用 `/sessions/search`。

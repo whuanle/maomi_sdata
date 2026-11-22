@@ -1,5 +1,5 @@
 using System.Globalization;
-using MediatR;
+using Mediator;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -157,13 +157,13 @@ public class MonitorController : ControllerBase
     /// <summary>消费状态与历史采样，不返回连接配置.</summary>
     [HttpGet("mq-consumption")]
     [Authorize(Roles = "admin")]
-    public Task<QueryMqConsumptionResponse> MqConsumption([FromQuery] QueryMqConsumptionCommand command, CancellationToken cancellationToken)
+    public ValueTask<QueryMqConsumptionResponse> MqConsumption([FromQuery] QueryMqConsumptionCommand command, CancellationToken cancellationToken)
         => _mediator.Send(command, cancellationToken);
 
     /// <summary>立即重试整个消费实例.</summary>
     [HttpPost("mq-consumption/retry")]
     [Authorize(Roles = "admin")]
-    public Task<bool> RetryMq([FromBody] RetryMqConsumerCommand command, CancellationToken cancellationToken)
+    public ValueTask<bool> RetryMq([FromBody] RetryMqConsumerCommand command, CancellationToken cancellationToken)
         => _mediator.Send(command, cancellationToken);
 
     /// <summary>

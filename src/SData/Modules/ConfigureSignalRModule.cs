@@ -7,7 +7,7 @@ namespace SData;
 
 /// <summary>
 /// SignalR 实时通道（T616）：AddSignalR + RUM 探针跨域 CORS 策略
-/// （项目允许站点 + 可选 SData:Rum:CorsOrigins 上限；hub 映射在 MainExtensions.UseSDataPipeline）.
+/// （项目允许站点校验，无全局上限；hub 映射在 MainExtensions.UseSDataPipeline）.
 /// </summary>
 public class ConfigureSignalRModule : IModule
 {

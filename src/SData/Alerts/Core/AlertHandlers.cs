@@ -1,5 +1,5 @@
 using System.Text.Json;
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using SData.Database;
 using SData.Database.Entities;
@@ -19,7 +19,7 @@ public class AlertHandlers(DatabaseContext db, IIdProvider ids, ISystemSettingsP
     IRequestHandler<QueryAlertChannelsCommand, List<AlertChannelItem>>,
     IRequestHandler<PreviewAlertCommand, AlertPoint>
 {
-    public async Task<AlertItem> Handle(SaveAlertCommand command, CancellationToken token)
+    public async ValueTask<AlertItem> Handle(SaveAlertCommand command, CancellationToken token)
     {
         AlertConditionCompiler.Compile(command.Domain, command.Condition, command.Parameters);
         JsonDocument definition;
@@ -98,7 +98,7 @@ public class AlertHandlers(DatabaseContext db, IIdProvider ids, ISystemSettingsP
         return ToItem(rule);
     }
 
-    public async Task<List<AlertItem>> Handle(QueryAlertsCommand command, CancellationToken token)
+    public async ValueTask<List<AlertItem>> Handle(QueryAlertsCommand command, CancellationToken token)
     {
         var query = db.AlertRules.AsNoTracking();
         if (command.SavedQueryId != null)
@@ -110,7 +110,7 @@ public class AlertHandlers(DatabaseContext db, IIdProvider ids, ISystemSettingsP
         return (await query.OrderByDescending(x => x.Id).Take(500).ToListAsync(token)).Select(ToItem).ToList();
     }
 
-    public async Task<bool> Handle(DeleteAlertCommand command, CancellationToken token)
+    public async ValueTask<bool> Handle(DeleteAlertCommand command, CancellationToken token)
     {
         var id = long.Parse(command.Id);
         var rule = await db.AlertRules.SingleOrDefaultAsync(x => x.Id == id, token) ?? throw BusinessException.Throw(404, "告警不存在");
@@ -121,7 +121,7 @@ public class AlertHandlers(DatabaseContext db, IIdProvider ids, ISystemSettingsP
         return true;
     }
 
-    public async Task<AlertHistory> Handle(QueryAlertHistoryCommand command, CancellationToken token)
+    public async ValueTask<AlertHistory> Handle(QueryAlertHistoryCommand command, CancellationToken token)
     {
         var id = long.Parse(command.Id);
         if (!await db.AlertRules.AnyAsync(x => x.Id == id, token)) throw BusinessException.Throw(404, "告警不存在");
@@ -131,11 +131,11 @@ public class AlertHandlers(DatabaseContext db, IIdProvider ids, ISystemSettingsP
             deliveries.Select(x => new AlertDeliveryItem(x.ChannelId.ToString(), x.Status, x.Attempts, x.Result)).ToList());
     }
 
-    public Task<List<AlertChannelItem>> Handle(QueryAlertChannelsCommand command, CancellationToken token)
-        => db.NotificationChannels.AsNoTracking().OrderBy(x => x.Name)
+    public async ValueTask<List<AlertChannelItem>> Handle(QueryAlertChannelsCommand command, CancellationToken token)
+        => await db.NotificationChannels.AsNoTracking().OrderBy(x => x.Name)
             .Select(x => new AlertChannelItem(x.Id.ToString(), x.Name, x.Type, x.Enabled)).ToListAsync(token);
 
-    public async Task<AlertPoint> Handle(PreviewAlertCommand command, CancellationToken token)
+    public async ValueTask<AlertPoint> Handle(PreviewAlertCommand command, CancellationToken token)
     {
         var end = clock.GetUtcNow().AddMinutes(-1);
         var count = await gate.ExecuteAsync(executor, new AlertCountQuery(command.Domain, command.Condition, command.Parameters, end.AddMinutes(-command.WindowMinutes), end, 10001), token);

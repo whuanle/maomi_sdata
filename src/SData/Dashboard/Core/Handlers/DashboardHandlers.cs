@@ -1,5 +1,5 @@
 using System.Text.Json;
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SData.Database;
@@ -27,7 +27,7 @@ public class SaveDashboardCommandHandler : IRequestHandler<SaveDashboardCommand,
     }
 
     /// <inheritdoc/>
-    public async Task<Simple<long>> Handle(SaveDashboardCommand request, CancellationToken cancellationToken)
+    public async ValueTask<Simple<long>> Handle(SaveDashboardCommand request, CancellationToken cancellationToken)
     {
         DashboardConfigValidator.Validate(request.ConfigJson);
 
@@ -82,7 +82,7 @@ public class DeleteDashboardCommandHandler : IRequestHandler<DeleteDashboardComm
     }
 
     /// <inheritdoc/>
-    public async Task<EmptyCommandResponse> Handle(DeleteDashboardCommand request, CancellationToken cancellationToken)
+    public async ValueTask<EmptyCommandResponse> Handle(DeleteDashboardCommand request, CancellationToken cancellationToken)
     {
         var dashboard = await _databaseContext.Dashboards.FirstOrDefaultAsync(x => x.Id == request.Id && x.Kind == "view", cancellationToken)
             ?? throw BusinessException.Throw(404, "仪表盘不存在");
@@ -109,7 +109,7 @@ public class QueryDashboardsCommandHandler : IRequestHandler<QueryDashboardsComm
     }
 
     /// <inheritdoc/>
-    public async Task<PagedResult<DashboardItem>> Handle(QueryDashboardsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<PagedResult<DashboardItem>> Handle(QueryDashboardsCommand request, CancellationToken cancellationToken)
     {
         var page = Math.Max(1, request.Page);
         var pageSize = Math.Clamp(request.PageSize, 1, 200);
@@ -159,7 +159,7 @@ public class GetDashboardCommandHandler : IRequestHandler<GetDashboardCommand, D
     }
 
     /// <inheritdoc/>
-    public async Task<DashboardItem> Handle(GetDashboardCommand request, CancellationToken cancellationToken)
+    public async ValueTask<DashboardItem> Handle(GetDashboardCommand request, CancellationToken cancellationToken)
     {
         return await _databaseContext.Dashboards.AsNoTracking()
             .Where(x => x.Id == request.Id && x.Kind == "view")
@@ -202,7 +202,7 @@ public class GetDashboardDataCommandHandler : IRequestHandler<GetDashboardDataCo
     }
 
     /// <inheritdoc/>
-    public async Task<GetDashboardDataCommandResponse> Handle(GetDashboardDataCommand request, CancellationToken cancellationToken)
+    public async ValueTask<GetDashboardDataCommandResponse> Handle(GetDashboardDataCommand request, CancellationToken cancellationToken)
     {
         var dashboard = await _databaseContext.Dashboards.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == request.Id && x.Kind == "view", cancellationToken)
@@ -249,7 +249,7 @@ public class PreviewPanelCommandHandler : IRequestHandler<PreviewPanelCommand, P
     }
 
     /// <inheritdoc/>
-    public async Task<PanelData> Handle(PreviewPanelCommand request, CancellationToken cancellationToken)
+    public async ValueTask<PanelData> Handle(PreviewPanelCommand request, CancellationToken cancellationToken)
     {
         var (from, to) = PanelRange.Resolve(null, request.From, request.To);
         return await _panelQueryExecutor.ExecuteAsync(request.Panel, from, to, request.RowLimit, cancellationToken);

@@ -4,15 +4,15 @@ SData 是面向内网单机部署的高性能观测/数据分析服务：**DuckD
 
 ## 1. 技术栈与架构
 
-- .NET 10 模块化单体（Maomi.Core 模块框架 + MediatR CQRS + EF Core(SQLite) + DuckDB.NET）。
+- .NET 10 模块化单体（Maomi.Core 模块框架 + Mediator（martinothamar/Mediator 源生成器）CQRS + EF Core(SQLite) + DuckDB.NET）。
 - **单一项目 `src/SData/SData.csproj`**（2026-11 由 47 个拆分项目合并而来，方便发布、避免多份 pdb/xml）。源码按 `{Domain}/{Layer}/` 目录组织：`{Domain}/Shared/`（请求/响应模型）、`{Domain}/Core/`（Handler/服务）、`{Domain}/Api/`（Controller）。命名空间保持拆分时期的形式（`SData.{Domain}.Shared/Core/Api`）。
 - 依赖方向仍严格单向（现为命名空间约定，不再由程序集边界强制）：`Api → Shared`，`Core → Api + Shared`；跨域只使用对方 `Shared`（或经接口）。
-- 宿主通过 `[InjectModule]` 聚合全部模块（`MainModule`）；横切配置（MVC/认证/MediatR/OTel）在 `src/SData/Modules/`。
+- 宿主通过 `[InjectModule]` 聚合全部模块（`MainModule`）；横切配置（MVC/认证/Mediator/OTel）在 `src/SData/Modules/`。
 
 ## 2. 模型与验证
 
 - 请求模型命名 `{Action}{Entity}Command` / `Query{Entity}Command`，响应 `{Command}Response` + `{Entity}Item`。
-- **每个请求模型必须实现 `IModelValidator<T>`**（`static abstract void Validate(AbstractValidator<T>)`），由 `InfraCoreModule.TypeFilter` 自动注册、`MediatRPipelineBehavior` 在进入 Handler 前执行。
+- **每个请求模型必须实现 `IModelValidator<T>`**（`static abstract void Validate(AbstractValidator<T>)`，位于 `SData.Infra.Services`），由 `InfraCoreModule.TypeFilter` 自动注册、`MediatorPipelineBehavior` 在进入 Handler 前执行；Handler 注册由 Mediator 源生成器在 `AddMediator()` 时自动完成（生命周期 Scoped，见 `ConfigureMediatorModule`）。
 - 用户身份只在 Controller 中注入：控制器调用 `_userContextProvider.SetUserContext(command)`；Handler 永不注入 `IUserContextProvider`，用户身份通过 `IUserIdContext` 携带在请求模型里。
 - 角色控制只放 Controller（`[Authorize(Roles = "admin")]`）；目标保护规则（如不允许删自己）放 Handler。
 
@@ -38,7 +38,7 @@ SData 是面向内网单机部署的高性能观测/数据分析服务：**DuckD
 
 ## 5. 可观测性
 
-- 内部链路：`AppConst.ActivitySource`（MediatR 管线自动埋点）；自身指标/链路固定经本地缓冲写入本机，不可关闭或修改；`SData:OTLP` 仅控制可选的额外外部出口。
+- 内部链路：`AppConst.ActivitySource`（Mediator 管线自动埋点）；自身指标/链路固定经本地缓冲写入本机，不可关闭或修改；`SData:OTLP` 仅控制可选的额外外部出口。
 - 服务状态只经 Monitor 模块（/health、/metrics、/api/monitor/status），不要在各模块自造状态接口。
 
 ## 6. 文档与流程

@@ -1,6 +1,8 @@
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using System.Text.Json;
+using SData.Infra;
 using SData.Infra.Configuration;
 using SData.Infra.Exceptions;
 using SData.Infra.Services;
@@ -17,6 +19,7 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
     private readonly ISystemSettingsProvider _settingsProvider;
     private readonly SystemOptions _systemOptions;
     private readonly IDuckDbRuntimeSettings _duckDb;
+    private readonly IConfiguration _configuration;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="QuerySettingsCommandHandler"/> class.
@@ -24,15 +27,17 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
     /// <param name="settingsProvider">系统设置.</param>
     /// <param name="systemOptions">文件配置（摄取缓冲等只读快照）.</param>
     /// <param name="duckDb">DuckDB 运行参数快照.</param>
-    public QuerySettingsCommandHandler(ISystemSettingsProvider settingsProvider, SystemOptions systemOptions, IDuckDbRuntimeSettings duckDb)
+    /// <param name="configuration">配置（MQTT 端口等零散键）.</param>
+    public QuerySettingsCommandHandler(ISystemSettingsProvider settingsProvider, SystemOptions systemOptions, IDuckDbRuntimeSettings duckDb, IConfiguration configuration)
     {
         _settingsProvider = settingsProvider;
         _systemOptions = systemOptions;
         _duckDb = duckDb;
+        _configuration = configuration;
     }
 
     /// <inheritdoc/>
-    public Task<SettingsResponse> Handle(QuerySettingsCommand request, CancellationToken cancellationToken)
+    public ValueTask<SettingsResponse> Handle(QuerySettingsCommand request, CancellationToken cancellationToken)
     {
         var s3 = _settingsProvider.GetS3();
         var response = new SettingsResponse
@@ -61,8 +66,37 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
                 BufferCapacity = _systemOptions.Ingest.BufferCapacity,
                 BufferByteBudgetBytes = _systemOptions.Ingest.BufferByteBudgetBytes,
             },
+            Startup = BuildStartupSnapshot(),
         };
-        return Task.FromResult(response);
+        return ValueTask.FromResult(response);
+    }
+
+    /// <summary>构建启动参数快照（白名单；MQTT 端口解析规则与 MqttBrokerService 保持一致）.</summary>
+    private StartupSettingsInfo BuildStartupSnapshot()
+    {
+        var mqttPort = 1883;
+        if (int.TryParse(_configuration["SData:Mqtt:Port"], out var parsedMqtt) && parsedMqtt is > 0 and <= 65535)
+        {
+            mqttPort = parsedMqtt;
+        }
+
+        return new StartupSettingsInfo
+        {
+            SystemJsonExists = File.Exists(AppConst.GetPath(AppConst.ConfigsDirectory, AppConst.SystemOptionsFile)),
+            Port = _systemOptions.Port,
+            MqttPort = mqttPort,
+            WebUI = _systemOptions.WebUI,
+            DatabasePath = _systemOptions.Database.Path,
+            DuckDbPath = _systemOptions.DuckDb.Path,
+            DuckDbMemoryLimit = _systemOptions.DuckDb.MemoryLimit,
+            DuckDbCheckpointThreshold = _systemOptions.DuckDb.CheckpointThreshold,
+            DuckDbQueryCacheTtlSeconds = _systemOptions.DuckDb.QueryCacheTtlSeconds,
+            DuckDbQueryCacheMaxEntries = _systemOptions.DuckDb.QueryCacheMaxEntries,
+            DuckDbTempDirectory = _systemOptions.DuckDb.TempDirectory,
+            IngestRequireAuth = _systemOptions.Ingest.RequireAuth,
+            IngestBufferCapacity = _systemOptions.Ingest.BufferCapacity,
+            IngestBufferByteBudgetBytes = _systemOptions.Ingest.BufferByteBudgetBytes,
+        };
     }
 }
 
@@ -70,8 +104,8 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
 public class SaveDuckDbSettingsCommandHandler(DuckDbSettingsService service) : IRequestHandler<SaveDuckDbSettingsCommand, DuckDbSettingsResponse>
 {
     /// <inheritdoc/>
-    public Task<DuckDbSettingsResponse> Handle(SaveDuckDbSettingsCommand request, CancellationToken cancellationToken)
-        => service.SaveAsync(request.MemoryLimit, cancellationToken);
+    public async ValueTask<DuckDbSettingsResponse> Handle(SaveDuckDbSettingsCommand request, CancellationToken cancellationToken)
+        => await service.SaveAsync(request.MemoryLimit, cancellationToken);
 }
 
 /// <summary>
@@ -94,7 +128,7 @@ public class SaveS3SettingsCommandHandler : IRequestHandler<SaveS3SettingsComman
     }
 
     /// <inheritdoc/>
-    public async Task<S3SettingsModel> Handle(SaveS3SettingsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<S3SettingsModel> Handle(SaveS3SettingsCommand request, CancellationToken cancellationToken)
     {
         var stored = _settingsProvider.GetS3();
         var s3 = new S3Options
@@ -144,7 +178,7 @@ public class SaveRetentionSettingsCommandHandler : IRequestHandler<SaveRetention
     }
 
     /// <inheritdoc/>
-    public async Task<RetentionPlanOptions> Handle(SaveRetentionSettingsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<RetentionPlanOptions> Handle(SaveRetentionSettingsCommand request, CancellationToken cancellationToken)
     {
         await _settingsProvider.SaveAsync(SettingKeys.Retention, JsonSerializer.Serialize(request.Retention, SystemSettingsProvider.JsonOptions), cancellationToken);
         return request.Retention;
@@ -168,7 +202,7 @@ public class SaveCompressionSettingsCommandHandler : IRequestHandler<SaveCompres
     }
 
     /// <inheritdoc/>
-    public async Task<CompressionOptions> Handle(SaveCompressionSettingsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<CompressionOptions> Handle(SaveCompressionSettingsCommand request, CancellationToken cancellationToken)
     {
         var compression = new CompressionOptions { ArchiveParquetCodec = request.Codec };
         await _settingsProvider.SaveAsync(SettingKeys.Compression, JsonSerializer.Serialize(compression, SystemSettingsProvider.JsonOptions), cancellationToken);
@@ -182,8 +216,8 @@ public class SaveCompressionSettingsCommandHandler : IRequestHandler<SaveCompres
 public class SaveRuntimeSettingsCommandHandler(RuntimeSettingsService service) : IRequestHandler<SaveRuntimeSettingsCommand, RuntimeSettings>
 {
     /// <inheritdoc/>
-    public Task<RuntimeSettings> Handle(SaveRuntimeSettingsCommand request, CancellationToken cancellationToken)
-        => service.SaveAsync(request.Runtime, cancellationToken);
+    public async ValueTask<RuntimeSettings> Handle(SaveRuntimeSettingsCommand request, CancellationToken cancellationToken)
+        => await service.SaveAsync(request.Runtime, cancellationToken);
 }
 
 /// <summary>
@@ -203,12 +237,12 @@ public class QueryMqInstancesCommandHandler : IRequestHandler<QueryMqInstancesCo
     }
 
     /// <inheritdoc/>
-    public Task<List<MqInstanceOptions>> Handle(QueryMqInstancesCommand request, CancellationToken cancellationToken)
+    public ValueTask<List<MqInstanceOptions>> Handle(QueryMqInstancesCommand request, CancellationToken cancellationToken)
     {
         var instances = JsonSerializer.Deserialize<List<MqInstanceOptions>>(
             JsonSerializer.Serialize(_settingsProvider.GetMqInstances(), SystemSettingsProvider.JsonOptions), SystemSettingsProvider.JsonOptions) ?? [];
         instances.ForEach(MqSecrets.Hide);
-        return Task.FromResult(instances);
+        return ValueTask.FromResult(instances);
     }
 }
 
@@ -234,7 +268,7 @@ public class SaveMqInstancesCommandHandler : IRequestHandler<SaveMqInstancesComm
     }
 
     /// <inheritdoc/>
-    public async Task<SData.Infra.Models.EmptyCommandResponse> Handle(SaveMqInstancesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<SData.Infra.Models.EmptyCommandResponse> Handle(SaveMqInstancesCommand request, CancellationToken cancellationToken)
     {
         var channelIds = request.Instances.Where(x => x.AlertsEnabled).SelectMany(x => x.NotificationChannelIds).Select(long.Parse).Distinct().ToList();
         if (channelIds.Count > 0 && (_database == null || await _database.NotificationChannels.CountAsync(x => channelIds.Contains(x.Id) && x.Enabled, cancellationToken) != channelIds.Count))
@@ -272,7 +306,7 @@ public class ParsePreviewCommandHandler : IRequestHandler<ParsePreviewCommand, M
     }
 
     /// <inheritdoc/>
-    public Task<MqParsePreviewResult> Handle(ParsePreviewCommand request, CancellationToken cancellationToken)
+    public ValueTask<MqParsePreviewResult> Handle(ParsePreviewCommand request, CancellationToken cancellationToken)
     {
         var topic = new MqTopicOptions
         {
@@ -282,7 +316,7 @@ public class ParsePreviewCommandHandler : IRequestHandler<ParsePreviewCommand, M
             Severity = request.Severity,
             Parser = request.Parser,
         };
-        return Task.FromResult(_previewer.Preview(request.Sample, topic));
+        return ValueTask.FromResult(_previewer.Preview(request.Sample, topic));
     }
 }
 
@@ -303,7 +337,7 @@ public class SaveOtlpSettingsCommandHandler : IRequestHandler<SaveOtlpSettingsCo
     }
 
     /// <inheritdoc/>
-    public async Task<OtlpOptions> Handle(SaveOtlpSettingsCommand request, CancellationToken cancellationToken)
+    public async ValueTask<OtlpOptions> Handle(SaveOtlpSettingsCommand request, CancellationToken cancellationToken)
     {
         var stored = _settingsProvider.GetOtlp();
         var otlp = new OtlpOptions
@@ -364,7 +398,7 @@ public class TestS3ConnectionCommandHandler : IRequestHandler<TestS3ConnectionCo
     }
 
     /// <inheritdoc/>
-    public async Task<TestS3ConnectionResponse> Handle(TestS3ConnectionCommand request, CancellationToken cancellationToken)
+    public async ValueTask<TestS3ConnectionResponse> Handle(TestS3ConnectionCommand request, CancellationToken cancellationToken)
     {
         var stored = _settingsProvider.GetS3();
         var s3 = new S3Options

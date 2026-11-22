@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using Mediator;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -99,7 +100,7 @@ public class DuckDbSettingsIntegrationTests
         builder.Services.AddSingleton<DuckDbSchemaBootstrapper>();
         builder.Services.AddSingleton<IS3SecretManager, S3SecretManager>();
         builder.Services.AddHostedService<StoreInitializer>();
-        builder.Services.AddMediatR(o => o.RegisterServicesFromAssembly(typeof(SaveDuckDbSettingsCommandHandler).Assembly));
+        builder.Services.AddMediator();
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
             o.TokenValidationParameters = new TokenValidationParameters
             {

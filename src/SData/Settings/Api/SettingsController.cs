@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SData.Infra;
@@ -30,12 +30,12 @@ public class SettingsController : ControllerBase
 
     [HttpGet("api-keys")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-    public Task<List<ApiKeyItem>> QueryApiKeys(CancellationToken cancellationToken)
+    public ValueTask<List<ApiKeyItem>> QueryApiKeys(CancellationToken cancellationToken)
         => _mediator.Send(new QueryApiKeysCommand(), cancellationToken);
 
     [HttpPost("api-keys")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-    public Task<ApiKeySecretResponse> ManageApiKey([FromBody] ManageApiKeyCommand command, CancellationToken cancellationToken)
+    public ValueTask<ApiKeySecretResponse> ManageApiKey([FromBody] ManageApiKeyCommand command, CancellationToken cancellationToken)
     {
         // 异常处理中间件可能清除已有响应头；发送前再次保证秘密响应不可缓存。
         Response.OnStarting(() =>
@@ -49,29 +49,29 @@ public class SettingsController : ControllerBase
     }
 
     [HttpGet("mqtt-auth")]
-    public Task<MqttAuthSettingsResponse> QueryMqttAuth(CancellationToken cancellationToken)
+    public ValueTask<MqttAuthSettingsResponse> QueryMqttAuth(CancellationToken cancellationToken)
         => _mediator.Send(new QueryMqttAuthSettingsCommand(), cancellationToken);
 
     [HttpPost("mqtt-auth")]
-    public Task<MqttAuthSettingsResponse> SaveMqttAuth([FromBody] SaveMqttAuthSettingsCommand command, CancellationToken cancellationToken)
+    public ValueTask<MqttAuthSettingsResponse> SaveMqttAuth([FromBody] SaveMqttAuthSettingsCommand command, CancellationToken cancellationToken)
     {
         _userContextProvider.SetUserContext(command);
         return _mediator.Send(command, cancellationToken);
     }
 
     [HttpGet("notification-channels")]
-    public Task<List<NotificationChannelItem>> QueryNotifications(CancellationToken cancellationToken)
+    public ValueTask<List<NotificationChannelItem>> QueryNotifications(CancellationToken cancellationToken)
         => _mediator.Send(new QueryNotificationChannelsCommand(), cancellationToken);
 
     [HttpPut("notification-channels")]
-    public Task<NotificationChannelItem> SaveNotification([FromBody] SaveNotificationChannelCommand command, CancellationToken cancellationToken)
+    public ValueTask<NotificationChannelItem> SaveNotification([FromBody] SaveNotificationChannelCommand command, CancellationToken cancellationToken)
     {
         _userContextProvider.SetUserContext(command);
         return _mediator.Send(command, cancellationToken);
     }
 
     [HttpDelete("notification-channels/{id}")]
-    public Task<bool> DeleteNotification(string id, [FromQuery] long version, CancellationToken cancellationToken)
+    public ValueTask<bool> DeleteNotification(string id, [FromQuery] long version, CancellationToken cancellationToken)
     {
         var command = new DeleteNotificationChannelCommand { Id = id, Version = version };
         _userContextProvider.SetUserContext(command);
@@ -79,7 +79,7 @@ public class SettingsController : ControllerBase
     }
 
     [HttpPost("notification-channels/test")]
-    public Task<NotificationSendResult> TestNotification([FromBody] TestNotificationChannelCommand command, CancellationToken cancellationToken)
+    public ValueTask<NotificationSendResult> TestNotification([FromBody] TestNotificationChannelCommand command, CancellationToken cancellationToken)
     {
         _userContextProvider.SetUserContext(command);
         return _mediator.Send<NotificationSendResult>(command, cancellationToken);
@@ -98,7 +98,7 @@ public class SettingsController : ControllerBase
 
     /// <summary>保存 DuckDB 内存限制（立即生效）.</summary>
     [HttpPut("duckdb")]
-    public Task<DuckDbSettingsResponse> SaveDuckDb([FromBody] SaveDuckDbSettingsCommand command, CancellationToken cancellationToken)
+    public ValueTask<DuckDbSettingsResponse> SaveDuckDb([FromBody] SaveDuckDbSettingsCommand command, CancellationToken cancellationToken)
         => _mediator.Send(command, cancellationToken);
 
     /// <summary>

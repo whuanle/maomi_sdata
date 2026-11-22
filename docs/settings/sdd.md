@@ -32,7 +32,8 @@
 
 - **运行时设置通道** `SystemSettingsProvider`（Settings.Core，单例）：SQLite `setting` 表键值覆盖 + 文件 `SystemOptions` 回退（懒加载全表缓存，保存即刷新；脏 JSON/库不可用回退文件默认，不阻塞后台 tick）。键：`system:duckdb/s3/retention/compression/mq/otlp`（值 = 选项类型 JSON；`system:kafka/rabbitmq/pulsar` 为旧单实例键，仅作合成回退）。契约 `ISystemSettingsProvider` 在 Settings.Shared，供 Store/Ingest 跨域引用（跨域仅引 Shared，符合分层）。
 - **MQ 实例配置** `GetMqInstances()`（读取顺序）：设置键 `system:mq`（`List<MqInstanceOptions>`，多实例主存储）> 文件 `SData:Mq:Instances` 节 > 旧 `system:kafka/rabbitmq/pulsar` 三键**内存合成**（`kafka-default` 等固定 id 1/2/3，仅 Enabled 且连接+topic 齐备才合成）；首次保存 `system:mq` 即完成迁移，旧键此后不再读取。选项类型 `MqInstanceOptions/MqTopicOptions/MqParserOptions` 在 Infra.Configuration.Shared（避免 Infra→Settings 循环引用）。
-- **设置 API** `SettingsController`（`/api/settings`，类级 `[Authorize(Roles = SDataRoles.Admin)]`）：GET 合并视图；PUT `s3/retention/compression/otlp`；POST `s3/test`；GET/PUT `mq-instances`（实例列表，全量替换，保存时新实例补雪花 id）；POST `mq-instances/parse-preview`（样例试解析，不落库）。CQRS 命令 + `IModelValidator`（天数 0–36500、codec 白名单、MQ 类型/格式白名单、Name 唯一、启用即连接必填、regex 可编译、csv 分隔符单字符）。旧 `PUT /settings/mq`（三键逐键保存）已随多实例改造移除。
+- **设置 API** `SettingsController`（`/api/settings`，类级 `[Authorize(Roles = SDataRoles.Admin)]`）：GET 合并视图（含 `startup` 启动参数快照：端口/DuckDB/缓冲等白名单字段 + `configs/system.json` 是否已创建；不含 InitialAdminPassword/InitialApiKey 等敏感项）；PUT `s3/retention/compression/otlp`；POST `s3/test`；GET/PUT `mq-instances`（实例列表，全量替换，保存时新实例补雪花 id）；POST `mq-instances/parse-preview`（样例试解析，不落库）。CQRS 命令 + `IModelValidator`（天数 0–36500、codec 白名单、MQ 类型/格式白名单、Name 唯一、启用即连接必填、regex 可编译、csv 分隔符单字符）。旧 `PUT /settings/mq`（三键逐键保存）已随多实例改造移除。
+- **启动参数覆盖** `configs/system.json`（`MainExtensions.AddConfigsOverride` 追加 JSON 配置源）：可调启动参数（端口、MQTT 端口、存储路径、DuckDB 资源、接入缓冲等）在 `{"SData": {…}}` 形状下覆盖代码默认值，重启生效；加载顺序 `appsettings.json < configs/appsettings.json < configs/system.json < 环境变量 < 命令行`。设置页「启动配置」页签（`?tab=startup`，`StartupConfigPanel`）只读展示：覆盖机制说明、模板 JSON（可复制）、system.json 创建状态与当前生效值；无写回接口，文件由部署者自行创建。
 - **消费配置展示**：编辑侧栏按基本信息、连接、认证/发现、队列分区，长字段整行、窄屏单列；解析参数与样例测试可展开。列表分离运行态、连接摘要和队列行，名称后展示有效配置及默认值，沿用语义主题 token；只改变展示，不修改消费或保存契约。
 - **消费重试与通知**：实例包含初始/封顶重试秒数（默认5/60）、告警开关（默认关闭）、渠道ID列表和冷却分钟数（默认10）。保存时验证渠道存在且启用，发送前再次核对；通知冷却元数据独立存SQLite，不属于配置JSON。运行及投递语义见 [Ingest设计](../ingest/sdd.md)。
 - **消费类型页签**：Status/Kafka/RabbitMQ/Pulsar 使用设计系统 Tabs；Status 为实例/配置主题消费状态和速度总览（详见 Monitor），其余三个页签保留连接与队列配置详情。数量含停用实例，新建默认当前协议，Status 默认 Kafka。
@@ -65,7 +66,7 @@
 - 管理员 Tab `?tab=notifications` 提供 11 类、多实例渠道的新增/编辑/启停/软删除与确认后测试；SQLite `notification_channel` 独立表保存，框架填充审计字段，版本列防止并发覆盖，雪花 id 对外传字符串。
 - 契约 `INotificationSender` 在 Settings.Shared，[Alert](../alerts/sdd.md) 按渠道 id 调用；Settings.Core 负责凭据、签名及业务码判断。评估历史、持久队列和有限重试由 Alert 模块承载。
 - 全配置使用 Data Protection 保护；响应只返回非秘密字段与已配置秘密的字段名。编辑显式保留/替换/清除，渠道类型固定。密钥环位于 SQLite 同目录 `notification-keys`。
-- 公共渠道限制官方 HTTPS origin，自建/自定义目标需部署侧 `NotificationAllowedOrigins` 精确 origin 白名单；连接时检查地址并直连，拒绝本机、链路本地及元数据地址，关闭代理/重定向，10 秒超时、8 并发、64 KiB 响应上限。
+- 通知目标不做限制（用户配置什么就发送什么，任意 HTTP/HTTPS 地址、任意网段均可）；传输层关闭代理/重定向，10 秒超时、8 并发、64 KiB 响应上限。
 - 自定义 JSON 模板只替换字符串值，Header 限 Authorization/X-*；传输直接调用处理器避免 HttpClient 诊断 URI 泄密，不记录远端响应及异常原文。Matrix 首期仅支持未加密房间。
 
 ## 风险

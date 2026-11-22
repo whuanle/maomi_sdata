@@ -131,11 +131,11 @@ Feature: 数据接入
   @INGEST-ES5 @manual
   Scenario: Filebeat 直推鉴权
     When Filebeat 以 Basic（password=接入 Key）或 X-Api-Key 推送 /_bulk
-    Then 鉴权通过并入库（9200 别名端口经 SData:Listeners 配置实现，见 T112）
+    Then 鉴权通过并入库（9200 标准端口内置固化，见 T112）
 
   @INGEST-ES6 @manual @e2e-待集成窗
   Scenario: Filebeat 直推端到端
-    Given SData 开启 9200 别名端口与接入 Key
+    Given SData 内置 9200 标准端口与接入 Key
     When Filebeat 按 configs/filebeat-example.yml 直推 /_bulk
     Then 日志按 _index 落 logs.source 并可查询；缓冲满 429 时 Filebeat 自动重试不丢事件（集成窗补验）
 
@@ -171,10 +171,10 @@ Feature: 数据接入
     Then 响应 partialSuccess.rejected_log_records 计数丢弃条数（Collector 可识别降级）
 
   @INGEST-G3 @auto:xunit
-  Scenario: Listeners 附加端口 gRPC 生效
-    Given SData:Listeners 配置 {Port:4317, Protocol:grpc}
-    When 服务启动后 gRPC 客户端经 4317 端口 Export
-    Then 附加端口提供 gRPC 服务（纯 HTTP/2）且入库正常
+  Scenario: 内置标准端口 gRPC 生效
+    Given 服务启动（4317/4318/9200 内置固化，无需配置）
+    When gRPC 客户端经 4317 端口 Export
+    Then 4317 提供 gRPC 服务（纯 HTTP/2）且入库正常
 
   @INGEST-G4 @manual
   Scenario: OTel Collector gRPC 直连验收（e2e 待集成窗）

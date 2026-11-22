@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Infra.Configuration;
 using SData.Ingest;
 using SData.Settings;
@@ -53,7 +53,7 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
     }
 
     /// <inheritdoc/>
-    public async Task<OverviewResponse> Handle(QueryOverviewCommand request, CancellationToken cancellationToken)
+    public async ValueTask<OverviewResponse> Handle(QueryOverviewCommand request, CancellationToken cancellationToken)
     {
         var response = new OverviewResponse
         {

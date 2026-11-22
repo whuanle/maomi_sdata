@@ -1,5 +1,5 @@
 using System.Text.Json;
-using MediatR;
+using Mediator;
 using SData.Infra.Exceptions;
 using SData.Infra.Models;
 using SData.Infra.Services;

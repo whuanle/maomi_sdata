@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Store;
 
 namespace SData.Traces.Handlers;
@@ -20,7 +20,7 @@ public class QueryTracesCommandHandler : IRequestHandler<QueryTracesCommand, Lis
     }
 
     /// <inheritdoc/>
-    public async Task<List<TraceSummaryItem>> Handle(QueryTracesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<List<TraceSummaryItem>> Handle(QueryTracesCommand request, CancellationToken cancellationToken)
     {
         var summaries = await _traceStore.QueryAsync(new Store.Models.TraceQuery
         {
@@ -62,7 +62,7 @@ public class GetTraceCommandHandler : IRequestHandler<GetTraceCommand, List<Span
     }
 
     /// <inheritdoc/>
-    public async Task<List<SpanItem>> Handle(GetTraceCommand request, CancellationToken cancellationToken)
+    public async ValueTask<List<SpanItem>> Handle(GetTraceCommand request, CancellationToken cancellationToken)
     {
         var spans = await _traceStore.GetTraceAsync(request.TraceId, cancellationToken);
         return spans.Select(span => new SpanItem
@@ -100,8 +100,8 @@ public class SearchTracesCommandHandler : IRequestHandler<SearchTracesCommand, S
     }
 
     /// <inheritdoc/>
-    public Task<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchTracesCommand request, CancellationToken cancellationToken)
+    public async ValueTask<SData.Store.QueryDsl.SearchDslResponse> Handle(SearchTracesCommand request, CancellationToken cancellationToken)
     {
-        return _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Traces, cancellationToken);
+        return await _executor.ExecuteAsync(request, SData.Store.QueryDsl.DataDomain.Traces, cancellationToken);
     }
 }

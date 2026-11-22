@@ -113,7 +113,7 @@ public class RumProjectTests : IDisposable
     [Fact]
     public async Task UpdateAndDelete_Missing_ThrowsNotFound()
     {
-        var updateException = await Assert.ThrowsAsync<BusinessException>(() => _saveHandler.Handle(new SaveRumProjectCommand
+        var updateException = await Assert.ThrowsAsync<BusinessException>(async () => await _saveHandler.Handle(new SaveRumProjectCommand
         {
             Id = 99999,
             ProjectKey = "rum_demo",
@@ -121,7 +121,7 @@ public class RumProjectTests : IDisposable
         }, CancellationToken.None));
         Assert.Equal(404, updateException.StatusCode);
 
-        var deleteException = await Assert.ThrowsAsync<BusinessException>(() => _deleteHandler.Handle(new DeleteRumProjectCommand
+        var deleteException = await Assert.ThrowsAsync<BusinessException>(async () => await _deleteHandler.Handle(new DeleteRumProjectCommand
         {
             Id = 99999,
         }, CancellationToken.None));

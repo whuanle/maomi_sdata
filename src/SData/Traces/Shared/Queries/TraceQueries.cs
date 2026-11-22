@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Infra.Services;
 
 namespace SData.Traces;

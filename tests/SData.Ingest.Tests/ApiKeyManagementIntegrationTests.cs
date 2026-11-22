@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using Mediator;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -41,7 +42,7 @@ public class ApiKeyManagementIntegrationTests
         builder.Services.AddSingleton<IIdProvider>(new DefaultIdProvider(1));
         builder.Services.AddDataProtection();
         builder.Services.AddSingleton<ApiKeyProtection>();
-        builder.Services.AddMediatR(o => o.RegisterServicesFromAssembly(typeof(ManageApiKeyCommandHandler).Assembly));
+        builder.Services.AddMediator();
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
             o.TokenValidationParameters = new TokenValidationParameters
             {

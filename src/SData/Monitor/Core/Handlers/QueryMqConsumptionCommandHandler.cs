@@ -1,4 +1,4 @@
-using MediatR;
+using Mediator;
 using SData.Ingest;
 using SData.Settings;
 using SData.Store.Models;
@@ -9,7 +9,7 @@ namespace SData.Monitor.Handlers;
 public class QueryMqConsumptionCommandHandler(ISystemSettingsProvider settings, IMqConsumptionStore store, SData.Store.IIngestBuffer? buffer = null)
     : IRequestHandler<QueryMqConsumptionCommand, QueryMqConsumptionResponse>
 {
-    public async Task<QueryMqConsumptionResponse> Handle(QueryMqConsumptionCommand request, CancellationToken cancellationToken)
+    public async ValueTask<QueryMqConsumptionResponse> Handle(QueryMqConsumptionCommand request, CancellationToken cancellationToken)
     {
         var runtime = MqRuntime.Snapshot().ToDictionary(x => x.InstanceId);
         var configured = settings.GetMqInstances().Where(x => !request.InstanceId.HasValue || x.Id == request.InstanceId).ToList();

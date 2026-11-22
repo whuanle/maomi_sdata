@@ -1,5 +1,5 @@
 using System.Security.Cryptography;
-using MediatR;
+using Mediator;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SData.Database;
@@ -13,7 +13,7 @@ namespace SData.Settings.Handlers;
 /// <summary>凭据按用途隔离，永不返回数据库哈希.</summary>
 public class QueryApiKeysCommandHandler(DatabaseContext database) : IRequestHandler<QueryApiKeysCommand, List<ApiKeyItem>>
 {
-    public async Task<List<ApiKeyItem>> Handle(QueryApiKeysCommand request, CancellationToken cancellationToken)
+    public async ValueTask<List<ApiKeyItem>> Handle(QueryApiKeysCommand request, CancellationToken cancellationToken)
     {
         var ingestion = await database.IngestKeys.AsNoTracking().ToListAsync(cancellationToken);
         var agents = await database.AgentKeys.AsNoTracking().ToListAsync(cancellationToken);
@@ -24,7 +24,7 @@ public class QueryApiKeysCommandHandler(DatabaseContext database) : IRequestHand
 public class ManageApiKeyCommandHandler(DatabaseContext database, IIdProvider ids, ILogger<ManageApiKeyCommandHandler> logger, ApiKeyProtection protection)
     : IRequestHandler<ManageApiKeyCommand, ApiKeySecretResponse>
 {
-    public async Task<ApiKeySecretResponse> Handle(ManageApiKeyCommand request, CancellationToken cancellationToken)
+    public async ValueTask<ApiKeySecretResponse> Handle(ManageApiKeyCommand request, CancellationToken cancellationToken)
     {
         if (request.Kind is not ("ingestion" or "agent") || request.Action is not ("create" or "rotate" or "enable" or "delete" or "reveal")
             || request.Name == null || request.Name.Length > 64 || (request.Action == "create" && string.IsNullOrWhiteSpace(request.Name))

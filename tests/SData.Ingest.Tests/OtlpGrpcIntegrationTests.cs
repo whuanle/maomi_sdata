@@ -113,11 +113,11 @@ public class OtlpGrpcIntegrationTests
     }
 
     /// <summary>
-    /// SData:Listeners 生效：ConfigureGrpcModule.ApplyListeners 配置 grpc 标记附加端口（模拟 4317），
+    /// 内置标准端口生效：ConfigureGrpcModule.ApplyListeners 固化 OTLP gRPC 端口（默认 4317，测试注入空闲端口避让冲突），
     /// gRPC 客户端经该端口调用成功（grpc=纯 HTTP/2 生效）.
     /// </summary>
     [Fact]
-    public async Task Listeners_GrpcPort_ServesGrpc()
+    public async Task BuiltinGrpcPort_ServesGrpc()
     {
         var ingestor = new RecordingIngestor();
         var port = GetFreePort();
@@ -127,9 +127,8 @@ public class OtlpGrpcIntegrationTests
         builder.Services.AddSingleton<IIngestIngestor>(ingestor);
         builder.Services.AddSingleton<IOtlpProtoParser, OtlpProtoParserService>();
 
-        // 模拟 ConfigureGrpcModule 的 Kestrel 配置路径：主端口 + grpc 标记附加端口
-        var listeners = new List<IngestListenerOptions> { new() { Port = port, Protocol = "grpc" } };
-        builder.Services.Configure<KestrelServerOptions>(options => ConfigureGrpcModule.ApplyListeners(options, GetFreePort(), listeners));
+        // 模拟 ConfigureGrpcModule 的 Kestrel 配置路径：主端口 + 内置 OTLP gRPC 端口
+        builder.Services.Configure<KestrelServerOptions>(options => ConfigureGrpcModule.ApplyListeners(options, GetFreePort(), otlpGrpcPort: port));
 
         var app = builder.Build();
         app.MapGrpcService<OtlpGrpcLogsService>();
@@ -151,7 +150,7 @@ public class OtlpGrpcIntegrationTests
     }
 
     /// <summary>
-    /// 启动仅挂 OTLP gRPC 服务的最小应用（随机空闲端口；Kestrel 经 ApplyListeners 显式启用 HTTP/2 明文 h2c）.
+    /// 启动仅挂 OTLP gRPC 服务的最小应用（随机空闲端口；Kestrel 显式启用 HTTP/2 明文 h2c）.
     /// </summary>
     private static WebApplication StartGrpcApp(IIngestIngestor ingestor, out int port)
     {

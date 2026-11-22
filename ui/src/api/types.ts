@@ -911,6 +911,24 @@ export interface IngestSettings {
   flushIntervalMs: number;
 }
 
+/** 启动参数快照（只读；可在 configs/system.json 覆盖，重启生效）. */
+export interface StartupSettings {
+  systemJsonExists: boolean;
+  port: number;
+  mqttPort: number;
+  webUi: boolean;
+  databasePath: string;
+  duckDbPath: string;
+  duckDbMemoryLimit: string;
+  duckDbCheckpointThreshold: string;
+  duckDbQueryCacheTtlSeconds: number;
+  duckDbQueryCacheMaxEntries: number;
+  duckDbTempDirectory?: string | null;
+  ingestRequireAuth: boolean;
+  ingestBufferCapacity: number;
+  ingestBufferByteBudgetBytes: number;
+}
+
 /** DuckDB 内存设置（保存后立即生效）. */
 export interface DuckDbSettings {
   memoryLimit: string;
@@ -925,6 +943,8 @@ export interface SettingsResponse {
   retention: RetentionSettings;
   compression: CompressionSettings;
   otlp: OtlpSettings;
+  /** 旧版后端尚未提供该字段；缺失时禁用启动配置入口. */
+  startup?: StartupSettings | null;
   ingest: IngestSettings;
 }
 

@@ -131,7 +131,7 @@ public class ApiAgentTests
         var handler = new ManageApiKeyCommandHandler(db, new TestIds(), NullLogger<ManageApiKeyCommandHandler>.Instance,
             new ApiKeyProtection(new EphemeralDataProtectionProvider()));
         Assert.False((await new QueryApiKeysCommandHandler(db).Handle(new(), default)).Single().CanReveal);
-        await Assert.ThrowsAsync<SData.Infra.Exceptions.BusinessException>(() => handler.Handle(new() { Kind = "ingestion", Id = "100", Action = "reveal" }, default));
+        await Assert.ThrowsAsync<SData.Infra.Exceptions.BusinessException>(async () => await handler.Handle(new() { Kind = "ingestion", Id = "100", Action = "reveal" }, default));
         Assert.True(entity.Enabled);
         Assert.Equal(HashHelper.Sha256Hex(secret), entity.KeyHash);
         Assert.Equal(before, entity.UpdateTime);

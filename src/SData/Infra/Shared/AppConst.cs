@@ -33,6 +33,11 @@ public static class AppConst
     public const string ConfigsDirectory = "configs";
 
     /// <summary>
+    /// 启动参数覆盖文件（configs 目录内；设置页「启动配置」页签提供模板与当前生效值，重启生效）.
+    /// </summary>
+    public const string SystemOptionsFile = "system.json";
+
+    /// <summary>
     /// 站点内容根目录，宿主启动时赋值（configs、data、rsa key 均相对该目录）.
     /// </summary>
     public static string ContentRoot { get; set; } = AppContext.BaseDirectory;
