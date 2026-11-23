@@ -12,6 +12,7 @@ namespace SData.Store.Core;
 /// 默认表解析器（契约 C2，统一查询管线的唯一表解析真相源）：
 /// 本地 = GetDayTables 现存天表；冷层 = 台账内存镜像（ColdLedgerCache，零 SQLite 往返）窗内分片 →
 /// 缓存命中返回本地缓存路径，未命中 S3 直读（并 fire-and-forget 后台预热）/ 本地冷存绝对路径直读；
+/// 双写并存分片（本地+S3 两行台账）本地优先收录、S3 副本跳过（按 ShardName 去重，防重复扫描）；
 /// 台账为空时兜底：S3 配置存在先经 glob() 验存、命中才输出域级通配（手工放置对象场景；
 /// 零命中/验存失败 fail-open 跳过冷层——read_parquet 对零命中通配在 prepare 阶段抛 IO Error，
 /// 会把本地天表可查的搜索整体打成 500；探测按配置指纹+域缓存并熔断，S3 故障不逐查询拖慢搜索），
@@ -31,6 +32,9 @@ public sealed class TableResolver : ITableResolver
     /// <summary>验存异常（端点不可达/鉴权失败/桶不存在）熔断窗口：期内不再触碰 S3，保证 S3 故障不拖慢本地查询.</summary>
     internal static readonly TimeSpan ProbeBrokenTtl = TimeSpan.FromMinutes(5);
 
+    /// <summary>本地冷存目录"无归档对象"判定缓存窗口（目录出现首个对象后最多延迟一个窗口可见）.</summary>
+    internal static readonly TimeSpan LocalColdEmptyTtl = TimeSpan.FromSeconds(60);
+
     private readonly DuckDbConnectionManager _connectionManager;
     private readonly SystemOptions _systemOptions;
     private readonly ISystemSettingsProvider _settingsProvider;
@@ -45,6 +49,12 @@ public sealed class TableResolver : ITableResolver
     /// 按窗口缓存探测结果，每个窗口每域最多触碰一次 S3.
     /// </summary>
     private readonly ConcurrentDictionary<string, (bool? HasFiles, DateTimeOffset ExpiresAt)> _globProbes = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 本地冷存目录"无归档对象"判定缓存（键 = 目录路径）：无冷层部署下省掉每查询 2 次目录 syscall；
+    /// 只缓存空判定（false），出现对象后不缓存（流式 Any 命中即停，成本可忽略）。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _localColdEmpty = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TableResolver"/> class.
@@ -106,39 +116,49 @@ public sealed class TableResolver : ITableResolver
 
     /// <summary>
     /// 台账镜像驱动的窗内逐分片冷层路径（天表同口径：day &gt;= from.Date 且 day &lt; to.Date）.
+    /// 双写并存（T512）：同一分片的本地与 S3 两行台账派生相同 ShardName——两遍扫描，本地键恒收录（绝对路径直读），
+    /// S3 键仅兜底无本地副本的分片（缓存命中/直读+预热），防同分片重复扫描出重复行、双写分片零 S3 依赖.
     /// </summary>
     private async Task<List<string>> ResolveColdFilesAsync(DataDomain domain, DateTimeOffset from, DateTimeOffset to, string? searchKeyword, CancellationToken cancellationToken)
     {
-        var entries = new List<(string ShardName, string Path)>();
-        foreach (var entry in await _ledgerCache.GetAsync(ArchiveService.DomainName(domain), cancellationToken))
+        var ledger = await _ledgerCache.GetAsync(ArchiveService.DomainName(domain), cancellationToken);
+        bool InWindow(ColdLedgerCache.ShardEntry entry)
         {
-            if (entry.RowCount <= 0 || entry.Day.AddDays(1) <= from || entry.Day >= to)
+            return entry.RowCount > 0 && entry.Day.AddDays(1) > from && entry.Day < to;
+        }
+
+        var resolved = new HashSet<string>(StringComparer.Ordinal);
+        var entries = new List<(string ShardName, string Path)>();
+        foreach (var entry in ledger)
+        {
+            if (!InWindow(entry) || entry.ObjectKey.StartsWith("s3://", StringComparison.Ordinal))
             {
                 continue;
             }
 
-            string path;
-            if (!entry.ObjectKey.StartsWith("s3://", StringComparison.Ordinal))
+            // 本地冷存对象：直读绝对路径，不进缓存（本地磁盘已是最终介质）
+            entries.Add((entry.ShardName, Path.Combine(AppConst.GetPath(), entry.ObjectKey)));
+            resolved.Add(entry.ShardName);
+        }
+
+        foreach (var entry in ledger)
+        {
+            if (!InWindow(entry) || !entry.ObjectKey.StartsWith("s3://", StringComparison.Ordinal) || !resolved.Add(entry.ShardName))
             {
-                // 本地冷存对象：直读绝对路径，不进缓存（本地磁盘已是最终介质）
-                path = Path.Combine(AppConst.GetPath(), entry.ObjectKey);
+                continue; // 已有本地副本（双写）或同分片重复行：跳过 S3
+            }
+
+            var cached = _coldCache.TryGetLocalPath(entry.ObjectKey);
+            if (cached != null)
+            {
+                entries.Add((entry.ShardName, cached));
             }
             else
             {
-                var cached = _coldCache.TryGetLocalPath(entry.ObjectKey);
-                if (cached != null)
-                {
-                    path = cached;
-                }
-                else
-                {
-                    // S3 直读 + fire-and-forget 后台预热（本轮查询直读，下轮命中本地）
-                    path = entry.ObjectKey;
-                    _coldCache.Warm(entry.ObjectKey);
-                }
+                // S3 直读 + fire-and-forget 后台预热（本轮查询直读，下轮命中本地）
+                entries.Add((entry.ShardName, entry.ObjectKey));
+                _coldCache.Warm(entry.ObjectKey);
             }
-
-            entries.Add((entry.ShardName, path));
         }
 
         if (entries.Count == 0 || string.IsNullOrWhiteSpace(searchKeyword))
@@ -242,9 +262,19 @@ public sealed class TableResolver : ITableResolver
 
         // 未配置 S3（含本地冷存部署）：本地冷存目录存在归档对象时输出目录通配（T512 本地归档可查）
         var coldDir = Path.Combine(AppConst.GetPath(), "data", "cold", DomainFolder(domain));
+        var utcNow = DateTimeOffset.UtcNow;
+        if (_localColdEmpty.TryGetValue(coldDir, out var emptyUntil) && emptyUntil > utcNow)
+        {
+            return globs; // 窗口内已知无归档对象，省掉目录 syscall
+        }
+
         if (Directory.Exists(coldDir) && Directory.EnumerateFiles(coldDir, "*.parquet").Any(file => !file.EndsWith(".idx.parquet", StringComparison.Ordinal)))
         {
             globs.Add(Path.Combine(coldDir, "*[0-9].parquet").Replace('\\', '/'));
+        }
+        else
+        {
+            _localColdEmpty[coldDir] = utcNow + LocalColdEmptyTtl;
         }
 
         return globs;

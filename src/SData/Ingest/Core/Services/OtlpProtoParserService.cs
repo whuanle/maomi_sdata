@@ -14,8 +14,17 @@ public class OtlpProtoParserService : SData.Ingest.IOtlpProtoParser
     public List<LogRecord> ParseLogs(byte[] body) => OtlpProtoParser.ParseLogs(ExportLogsServiceRequest.Parser.ParseFrom(body));
 
     /// <inheritdoc/>
+    public List<LogRecord> ParseLogs(byte[] buffer, int offset, int count) => OtlpProtoParser.ParseLogs(ExportLogsServiceRequest.Parser.ParseFrom(buffer, offset, count));
+
+    /// <inheritdoc/>
     public List<SpanRecord> ParseTraces(byte[] body) => OtlpProtoParser.ParseTraces(ExportTraceServiceRequest.Parser.ParseFrom(body));
 
     /// <inheritdoc/>
+    public List<SpanRecord> ParseTraces(byte[] buffer, int offset, int count) => OtlpProtoParser.ParseTraces(ExportTraceServiceRequest.Parser.ParseFrom(buffer, offset, count));
+
+    /// <inheritdoc/>
     public List<MetricPointRecord> ParseMetrics(byte[] body) => OtlpProtoParser.ParseMetrics(ExportMetricsServiceRequest.Parser.ParseFrom(body));
+
+    /// <inheritdoc/>
+    public List<MetricPointRecord> ParseMetrics(byte[] buffer, int offset, int count) => OtlpProtoParser.ParseMetrics(ExportMetricsServiceRequest.Parser.ParseFrom(buffer, offset, count));
 }

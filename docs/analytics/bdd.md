@@ -28,6 +28,18 @@ Feature: 只读分析查询
     When 超出执行预算或调用方取消
     Then 终止等待或数据库工作并释放资源，后续查询仍可执行
 
+  @ANALYTICS-S227 @auto:xunit
+  Scenario: 统一搜索直查结果短 TTL 缓存
+    Given 配置 AnalyticsQueryCacheTtlSeconds 大于 0 且查询窗口尾端可向前对齐到 TTL 时间桶
+    When 同一 SQL 与参数在同一 TTL 桶内重复轮询
+    Then 第二次直接回放缓存结果不再触碰数据库，最坏数据陈旧度等于 TTL，窗口无法向前对齐或行数超上限时直通
+
+  @ANALYTICS-S228 @auto:xunit
+  Scenario: 缓存关闭与告警计数直通
+    Given 配置 AnalyticsQueryCacheTtlSeconds 为 0 或调用方为告警计数
+    When 执行统一搜索或告警计数
+    Then 每次都真实执行不经过缓存，告警语义与缓存开关无关
+
 
   @ANALYTICS-S220 @manual
   Scenario: 从完整搜索条件创建告警

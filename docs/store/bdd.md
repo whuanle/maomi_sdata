@@ -28,6 +28,30 @@ Feature: DuckDB 观测数据存储
     When 缓冲接收完整批次且写入器提交事务
     Then 仅批次最后一条携带回执，回执在事务提交后完成，有等待者时跳过低水位等待
 
+  @STORE-PF17 @auto:xunit
+  Scenario: logs 天表列集规范时按固定列序落库
+    Given logs 天表列集与建表 DDL 规范列序完全一致
+    When 写入器批量落库日志
+    Then 每行按固定列序直写、不再逐列字符串匹配，遗留列集自动回退通用分派路径
+
+  @STORE-PF18 @auto:xunit
+  Scenario: 落库 append 分段可观测
+    Given 写入器批量落库任意域数据
+    When 一次 flush 完成
+    Then 行循环耗时、appender.Close 耗时分别计入 sdata_ingest_append_rowloop_seconds 与 sdata_ingest_close_seconds，行数累计进 sdata_ingest_append_rows_total
+
+  @STORE-PF19 @auto:xunit
+  Scenario: 分析查询在当前线程执行不跳线
+    Given 分析查询的驱动异步调用底层同步执行
+    When 查询进入执行阶段
+    Then 不再经独立工作线程包装，预算截止仍由惰性 watchdog 周期取消中断原生查询
+
+  @STORE-PF20 @auto:xunit
+  Scenario: 本地冷存目录空判定短窗缓存
+    Given 未配置 S3 且本地冷存目录不存在或无归档对象
+    When 表解析器解析查询数据源
+    Then 空判定按 60 秒窗口缓存，窗口内不再做目录 syscall；目录出现首个归档对象后最多延迟一个窗口可见
+
   @STORE-CACHE1 @auto:xunit
   Scenario: 查询结果短 TTL 缓存命中与桶边界失效
     Given DSL 统一查询开启结果缓存（QueryCacheTtlSeconds > 0）
@@ -363,7 +387,7 @@ Feature: 冷存档与三段保留（T512，契约 C4/C5）
   Scenario: S3 冷对象超期清理（三段保留终点）
     Given MinIO 环境（configs/minio-compose.yml）与超过 hot+cold 的归档对象
     When RetentionService 单轮清理
-    Then S3 对象、索引对象、本地镜像与台账行均被清理；删除失败保留台账下轮重试
+    Then S3 对象、本地冷存对象、索引对象与本地镜像、台账行均被清理（逐台账行按对象键路由介质）；删除失败保留台账下轮重试
 
   @STORE-ARCH9 @auto:xunit
   Scenario: 四类数据归档后仍可查询
@@ -382,3 +406,31 @@ Feature: 冷存档与三段保留（T512，契约 C4/C5）
     Given 归档台账已发布但本地副本尚未清理
     When 服务重新启动并恢复归档
     Then 查询仅计数一次且恢复不重复发布对象
+
+  @STORE-ARCH12 @auto:xunit
+  Scenario: 分片计划双写并存（本地恒有、S3 按配置追加）
+    Given BuildShardPlan 分别以未配置/已配置 S3 与 day/hour 粒度计算
+    Then 本地键 data/cold/{domain}/{day[_HH]}.parquet 恒有（与 S3 桶内 {prefix}/{domain}/{day[_HH]}.parquet 结构同构）；
+         配置 S3 后每分片追加 s3:// 键；hour 粒度一天 24 分片逐分片双键
+
+  @STORE-ARCH13 @manual
+  Scenario: 配置 S3 后归档双写本地与桶（本地磁盘冷备）
+    Given MinIO 环境（configs/minio-compose.yml）且设置页保存 S3 配置
+    When ArchiveService 单轮归档
+    Then data/cold/{domain}/{批次}/{day}.parquet 与 s3://{bucket}/{prefix}/{domain}/{批次}/{day}.parquet 同时生成，
+         台账各落一行（同 ShardName、行数一致）；词项索引本地镜像恒建、S3 远端索引随 s3 副本建；
+         关闭 S3 后归档仅写本地（行为与旧版一致）
+
+  @STORE-ARCH14 @auto:xunit
+  Scenario: 双写全有或全无（任一目的地失败整轮失败）
+    Given S3 配置指向不可达端点（写入顺序本地先、S3 后）
+    When ArchiveService 单轮归档
+    Then 本地副本先行落盘但 s3 COPY 失败 → 整轮失败不落台账，冻结天表保留待下轮重试（下轮 PrepareDestination 覆盖半写文件）；
+         本地磁盘满同样阻塞归档批次（本地为硬性目的地）
+
+  @STORE-COLD7 @auto:xunit
+  Scenario: 双写分片查询本地优先去重与 S3-only 兼容
+    Given 台账同分片存在本地与 S3 两行（派生相同 ShardName）或仅 S3 一行（升级前历史对象）
+    When Resolve 查询区间
+    Then 双写分片仅收录本地绝对路径（防同分片重复扫描出重复行），S3 行不触发缓存预热；
+         S3-only 分片仍解析 s3:// 路径（缓存命中/直读+预热）

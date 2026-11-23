@@ -14,6 +14,8 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
     private readonly Histogram _maintenanceLockWait = new("sdata_store_maintenance_lock_wait_seconds");
     private readonly Histogram _ingestAppend = new("sdata_ingest_append_seconds");
     private readonly Histogram _ingestCommit = new("sdata_ingest_commit_seconds");
+    private readonly Histogram _ingestAppendRowLoop = new("sdata_ingest_append_rowloop_seconds");
+    private readonly Histogram _ingestAppendClose = new("sdata_ingest_close_seconds");
     private readonly Histogram _rollupDuration = new("sdata_rollup_duration_seconds");
     private readonly Histogram _archiveDuration = new("sdata_archive_duration_seconds");
     private readonly Histogram _retentionDuration = new("sdata_retention_duration_seconds");
@@ -23,6 +25,7 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
     private long _retentionArchiveRecordsExpired;
     private long _retentionRollupRowsDeleted;
     private long _ingestFastRejected;
+    private long _ingestAppendRows;
 
     public StorePerformanceSnapshot Snapshot => new()
     {
@@ -37,6 +40,8 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
             _maintenanceLockWait.Snapshot(),
             _ingestAppend.Snapshot(),
             _ingestCommit.Snapshot(),
+            _ingestAppendRowLoop.Snapshot(),
+            _ingestAppendClose.Snapshot(),
             _rollupDuration.Snapshot(),
             _archiveDuration.Snapshot(),
             _retentionDuration.Snapshot(),
@@ -49,6 +54,7 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
             new() { Name = "sdata_retention_archive_records_expired_total", Value = Interlocked.Read(ref _retentionArchiveRecordsExpired) },
             new() { Name = "sdata_retention_rollup_rows_deleted_total", Value = Interlocked.Read(ref _retentionRollupRowsDeleted) },
             new() { Name = "sdata_ingest_fast_rejected_total", Value = Interlocked.Read(ref _ingestFastRejected) },
+            new() { Name = "sdata_ingest_append_rows_total", Value = Interlocked.Read(ref _ingestAppendRows) },
         ],
     };
 
@@ -61,6 +67,9 @@ internal sealed class StorePerformanceMetrics : IStorePerformanceMetrics
     public void RecordMaintenanceLockWait(long start) => _maintenanceLockWait.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
     public void RecordIngestAppend(long start) => _ingestAppend.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
     public void RecordIngestCommit(long start) => _ingestCommit.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
+    public void RecordIngestAppendRowLoop(double seconds) => _ingestAppendRowLoop.Record(seconds);
+    public void RecordIngestAppendClose(double seconds) => _ingestAppendClose.Record(seconds);
+    public void RecordIngestAppendRows(long count) => Interlocked.Add(ref _ingestAppendRows, count);
     public void RecordIngestFastRejected(long count) => Interlocked.Add(ref _ingestFastRejected, count);
 
     public void RecordRollupDuration(long start) => _rollupDuration.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);

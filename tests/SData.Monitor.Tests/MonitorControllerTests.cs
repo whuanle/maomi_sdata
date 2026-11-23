@@ -118,5 +118,17 @@ public class MonitorControllerTests
         public void RecordIngestFastRejected(long count)
         {
         }
+
+        public void RecordIngestAppendRowLoop(double seconds)
+        {
+        }
+
+        public void RecordIngestAppendClose(double seconds)
+        {
+        }
+
+        public void RecordIngestAppendRows(long count)
+        {
+        }
     }
 }

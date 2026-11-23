@@ -15,6 +15,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
 {
     private readonly DuckDbOptions _options;
     private readonly S3Options _s3;
+    private readonly bool _traceIndexEnabled;
     private readonly ILogger<DuckDbConnectionManager> _logger;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private SemaphoreSlim _queryLock;
@@ -127,6 +128,15 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
     internal void RecordIngestAppend(long started) => _performanceMetrics.RecordIngestAppend(started);
 
     internal void RecordIngestCommit(long started) => _performanceMetrics.RecordIngestCommit(started);
+
+    /// <inheritdoc/>
+    public void RecordIngestAppendRowLoop(double seconds) => _performanceMetrics.RecordIngestAppendRowLoop(seconds);
+
+    /// <inheritdoc/>
+    public void RecordIngestAppendClose(double seconds) => _performanceMetrics.RecordIngestAppendClose(seconds);
+
+    /// <inheritdoc/>
+    public void RecordIngestAppendRows(long count) => _performanceMetrics.RecordIngestAppendRows(count);
 
     /// <inheritdoc/>
     public void RecordIngestFastRejected(long count) => _performanceMetrics.RecordIngestFastRejected(count);
@@ -247,6 +257,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
         var maxQueries = Math.Clamp(_options.MaxConcurrentQueries, 1, 32);
         _queryLock = new SemaphoreSlim(maxQueries, maxQueries);
         _s3 = options.S3;
+        _traceIndexEnabled = options.Ingest.TraceIndexEnabled;
         _logger = logger;
     }
 
@@ -411,7 +422,7 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
                     continue;
                 }
 
-                foreach (var sql in TimeTables.CreateSql(table))
+                foreach (var sql in TimeTables.CreateSql(table, _traceIndexEnabled))
                 {
                     await ExecuteUnsafeAsync(sql, null, cancellationToken);
                 }

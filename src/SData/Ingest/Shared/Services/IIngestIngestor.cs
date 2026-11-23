@@ -29,6 +29,27 @@ public interface IIngestIngestor
     bool EnqueueMetric(MetricPointRecord record);
 
     /// <summary>
+    /// 批量日志入缓冲（OTLP 解析路径使用，整批复用字节预算检查）.
+    /// </summary>
+    /// <param name="records">日志记录.</param>
+    /// <returns>接受/丢弃条数.</returns>
+    (long Accepted, long Dropped) EnqueueLogs(IReadOnlyList<LogRecord> records);
+
+    /// <summary>
+    /// 批量 span 入缓冲（OTLP 解析路径使用）.
+    /// </summary>
+    /// <param name="records">span 记录.</param>
+    /// <returns>接受/丢弃条数.</returns>
+    (long Accepted, long Dropped) EnqueueSpans(IReadOnlyList<SpanRecord> records);
+
+    /// <summary>
+    /// 批量指标点入缓冲（OTLP 解析路径使用）.
+    /// </summary>
+    /// <param name="records">指标点.</param>
+    /// <returns>接受/丢弃条数.</returns>
+    (long Accepted, long Dropped) EnqueueMetrics(IReadOnlyList<MetricPointRecord> records);
+
+    /// <summary>
     /// 单条遥测入缓冲.
     /// </summary>
     /// <param name="record">遥测记录.</param>
@@ -120,6 +141,15 @@ public interface IOtlpProtoParser
     List<SData.Store.Models.LogRecord> ParseLogs(byte[] body);
 
     /// <summary>
+    /// 解析 OTLP logs proto 报文（缓冲区切片，避免整包拷贝）.
+    /// </summary>
+    /// <param name="buffer">承载报文的缓冲区.</param>
+    /// <param name="offset">起始偏移.</param>
+    /// <param name="count">字节数.</param>
+    /// <returns>日志记录.</returns>
+    List<SData.Store.Models.LogRecord> ParseLogs(byte[] buffer, int offset, int count);
+
+    /// <summary>
     /// 解析 OTLP traces proto 报文（已解压的 ExportTraceServiceRequest 字节）.
     /// </summary>
     /// <param name="body">proto 字节.</param>
@@ -127,9 +157,27 @@ public interface IOtlpProtoParser
     List<SData.Store.Models.SpanRecord> ParseTraces(byte[] body);
 
     /// <summary>
+    /// 解析 OTLP traces proto 报文（缓冲区切片，避免整包拷贝）.
+    /// </summary>
+    /// <param name="buffer">承载报文的缓冲区.</param>
+    /// <param name="offset">起始偏移.</param>
+    /// <param name="count">字节数.</param>
+    /// <returns>span 记录.</returns>
+    List<SData.Store.Models.SpanRecord> ParseTraces(byte[] buffer, int offset, int count);
+
+    /// <summary>
     /// 解析 OTLP metrics proto 报文（已解压的 ExportMetricsServiceRequest 字节）.
     /// </summary>
     /// <param name="body">proto 字节.</param>
     /// <returns>指标点.</returns>
     List<SData.Store.Models.MetricPointRecord> ParseMetrics(byte[] body);
+
+    /// <summary>
+    /// 解析 OTLP metrics proto 报文（缓冲区切片，避免整包拷贝）.
+    /// </summary>
+    /// <param name="buffer">承载报文的缓冲区.</param>
+    /// <param name="offset">起始偏移.</param>
+    /// <param name="count">字节数.</param>
+    /// <returns>指标点.</returns>
+    List<SData.Store.Models.MetricPointRecord> ParseMetrics(byte[] buffer, int offset, int count);
 }

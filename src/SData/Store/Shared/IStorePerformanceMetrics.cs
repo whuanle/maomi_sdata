@@ -7,6 +7,15 @@ public interface IStorePerformanceMetrics
 
     /// <summary>记录接入背压快速拒绝次数（模型绑定前拦截的 429）.</summary>
     void RecordIngestFastRejected(long count);
+
+    /// <summary>记录 ingest append 行循环耗时（不含 appender.Close 落段）.</summary>
+    void RecordIngestAppendRowLoop(double seconds);
+
+    /// <summary>记录 ingest appender.Close 落段耗时.</summary>
+    void RecordIngestAppendClose(double seconds);
+
+    /// <summary>累计 ingest append 行数.</summary>
+    void RecordIngestAppendRows(long count);
 }
 
 /// <summary>Store 累积直方图的只读快照.</summary>

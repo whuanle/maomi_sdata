@@ -33,7 +33,10 @@ public class StoreCoreModule : IModule
         context.Services.AddSingleton<DuckDbSchemaBootstrapper>();
         context.Services.AddSingleton<IngestBuffer>();
         context.Services.AddSingleton<SData.Store.IIngestBuffer>(sp => sp.GetRequiredService<IngestBuffer>());
-        context.Services.AddSingleton<SData.Store.IAnalyticsExecutor, AnalyticsExecutor>();
+        context.Services.AddSingleton<AnalyticsExecutor>();
+        // 分析查询执行器包装短 TTL 结果缓存装饰器（AnalyticsQueryCacheTtlSeconds=0 时直通；告警计数直通）
+        context.Services.AddSingleton<SData.Store.IAnalyticsExecutor>(sp =>
+            new CachedAnalyticsExecutor(sp.GetRequiredService<AnalyticsExecutor>(), sp.GetRequiredService<SystemOptions>()));
         context.Services.AddSingleton<IAnalyticsCatalog, AnalyticsCatalog>();
         context.Services.AddSingleton<SData.Store.IStoreInfo>(sp => sp.GetRequiredService<DuckDbConnectionManager>());
         context.Services.AddSingleton<SData.Store.IStorePerformanceMetrics>(sp => sp.GetRequiredService<DuckDbConnectionManager>());

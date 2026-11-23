@@ -196,14 +196,20 @@ public class IngestWriterService : BackgroundService
         }
     }
 
+    /// <summary>logs 表规范列序（与 TimeTables.CreateSql 的 logs DDL 一致）；一致时走免 switch 的固定列序快路径.</summary>
+    private static readonly string[] CanonicalLogColumns =
+        ["id", "ts", "service", "severity", "body", "trace_id", "span_id", "attributes", "resource", "source"];
+
     private async Task AppendAsync(DuckDBConnection connection, IngestKind kind, string table, List<object> records, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var logColumns = kind == IngestKind.Log
             ? await _connectionManager.GetLogColumnsAsync(connection, table, cancellationToken)
             : Array.Empty<string>();
+        var fastLogPath = IsCanonicalLogColumns(logColumns);
 
         using var appender = connection.CreateAppender(table);
+        var rowLoopStarted = Stopwatch.GetTimestamp();
 
         foreach (var recordObject in records)
         {
@@ -214,6 +220,15 @@ public class IngestWriterService : BackgroundService
                     if (log.Id == 0)
                     {
                         log.Id = _idProvider.GetLongId();
+                    }
+
+                    if (fastLogPath)
+                    {
+                        row.AppendValue(log.Id).AppendValue(Normalize(log.Timestamp)).AppendValue(log.Service)
+                            .AppendValue(log.Severity).AppendValue(log.Body ?? string.Empty).AppendValue(log.TraceId)
+                            .AppendValue(log.SpanId).AppendValue(log.AttributesJson).AppendValue(log.ResourceJson)
+                            .AppendValue(log.Source);
+                        break;
                     }
 
                     foreach (var column in logColumns)
@@ -273,7 +288,30 @@ public class IngestWriterService : BackgroundService
             row.EndRow();
         }
 
+        var closeStarted = Stopwatch.GetTimestamp();
+        _connectionManager.RecordIngestAppendRows(records.Count);
+        _connectionManager.RecordIngestAppendRowLoop(Stopwatch.GetElapsedTime(rowLoopStarted).TotalSeconds);
         appender.Close();
+        _connectionManager.RecordIngestAppendClose(Stopwatch.GetElapsedTime(closeStarted).TotalSeconds);
+    }
+
+    /// <summary>列集与规范序完全一致时返回 true（缓存由 GetLogColumnsAsync 承担，这里仅做一次线性比对/批）.</summary>
+    private static bool IsCanonicalLogColumns(IReadOnlyList<string> logColumns)
+    {
+        if (logColumns.Count != CanonicalLogColumns.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < logColumns.Count; i++)
+        {
+            if (!string.Equals(logColumns[i], CanonicalLogColumns[i], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string Prefix(IngestKind kind)

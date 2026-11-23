@@ -37,6 +37,30 @@ Feature: 数据接入
     Then 请求立即返回 HTTP 429 与 Retry-After，响应 accepted 为 0 表示整批未解析未接收，客户端需整批重试
     Then 被拒请求不产生请求体反序列化开销，快速拒绝次数计入 sdata_ingest_fast_rejected_total
 
+  @INGEST-PF14 @auto:xunit
+  Scenario: OTLP 解析结果按批入缓冲
+    Given 一个 OTLP 请求解析出多条日志、链路或指标记录
+    When 解析结果提交到接入缓冲
+    Then 三类记录按批提交并返回接受与丢弃条数，部分拒绝时响应仍为 429 并在 partialSuccess 提示
+
+  @INGEST-PF15 @auto:xunit
+  Scenario: OTLP 端点在缓冲满载时于读体前快速拒绝
+    Given /v1 与 /ingest/otlp 各端点挂载接入背压过滤器
+    When 接入缓冲接近容量上限或字节预算耗尽时 OTLP 请求到达
+    Then 请求在读体与解压之前立即返回 HTTP 429 与 Retry-After，不再产生解压与解析开销
+
+  @INGEST-PF16 @auto:xunit
+  Scenario: OTLP proto 解析在请求内复用 JSON 写出缓冲
+    Given 一个 OTLP proto 请求解析出多条记录
+    When 属性、事件与 resource 转为 JSON 字符串
+    Then 同一请求共用一个写出缓冲逐条复用，trace/span id 以查表直写小写 hex，输出形状与既有契约一致
+
+  @INGEST-PF17 @auto:config
+  Scenario: 链路热表 trace_id 索引可按配置省略
+    Given 配置 Ingest:TraceIndexEnabled
+    When 创建 traces 天表
+    Then 开启时建表附带 trace_id 索引，关闭时省略索引以提升写入吞吐（等值查询由列存扫描承担）
+
   @INGEST-PF09 @auto:xunit
   Scenario: MQ 批量入缓冲只重试被拒记录
     Given MQ 消息批量解析为日志记录且接入缓冲容量不足

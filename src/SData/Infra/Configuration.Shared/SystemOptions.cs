@@ -308,6 +308,16 @@ public class DuckDbOptions
     /// </summary>
     public int QueryCacheMaxEntries { get; set; } = 256;
 
+    /// <summary>
+    /// 分析查询（{{logs}} 占位符 SQL）结果缓存 TTL（秒，0 = 关闭）。窗口尾端按 TTL 对齐时间桶，仪表盘重复轮询在 TTL 内命中缓存；最坏陈旧度 = TTL.
+    /// </summary>
+    public int AnalyticsQueryCacheTtlSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// 分析查询结果缓存最大条目数.
+    /// </summary>
+    public int AnalyticsQueryCacheMaxEntries { get; set; } = 256;
+
     /// <summary>分析查询预算（秒，1–300），包含准入等待及原生执行.</summary>
     public int QueryTimeoutSeconds { get; set; } = 30;
 
@@ -408,6 +418,12 @@ public class IngestOptions
     /// 落库间隔（毫秒）.
     /// </summary>
     public int FlushIntervalMs { get; set; } = 500;
+
+    /// <summary>
+    /// 链路热表 trace_id ART 索引开关. 压测（900 万 span 热表）显示：索引维护让 traces 写入吞吐下降约
+    /// 39%，而精确 trace_id 等值查询耗时不变（DuckDB 字典编码 + zone map 扫描即可）；大表规模下可关闭.
+    /// </summary>
+    public bool TraceIndexEnabled { get; set; } = true;
 }
 
 /// <summary>

@@ -247,6 +247,51 @@ public class OtlpGrpcIntegrationTests
 
         public bool EnqueueTelemetry(TelemetryRecord record) => !Full;
 
+        public (long Accepted, long Dropped) EnqueueLogs(IReadOnlyList<SData.Store.Models.LogRecord> records)
+        {
+            if (Full)
+            {
+                return (0, records.Count);
+            }
+
+            lock (_lock)
+            {
+                Logs.AddRange(records);
+            }
+
+            return (records.Count, 0);
+        }
+
+        public (long Accepted, long Dropped) EnqueueSpans(IReadOnlyList<SpanRecord> records)
+        {
+            if (Full)
+            {
+                return (0, records.Count);
+            }
+
+            lock (_lock)
+            {
+                Spans.AddRange(records);
+            }
+
+            return (records.Count, 0);
+        }
+
+        public (long Accepted, long Dropped) EnqueueMetrics(IReadOnlyList<MetricPointRecord> records)
+        {
+            if (Full)
+            {
+                return (0, records.Count);
+            }
+
+            lock (_lock)
+            {
+                Metrics.AddRange(records);
+            }
+
+            return (records.Count, 0);
+        }
+
         public IngestResponse IngestLogs(IEnumerable<IngestLogItem> items) => new();
 
         public IngestResponse IngestSpans(IEnumerable<IngestSpanItem> items) => new();

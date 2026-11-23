@@ -26,9 +26,9 @@ public class OtlpHttpBodyTests
         string? parsed = null;
         var result = await OtlpV1Controller.ExportAsync(
             context.Request,
-            _ => throw new InvalidOperationException("JSON request was parsed as protobuf"),
+            (_, _, _) => throw new InvalidOperationException("JSON request was parsed as protobuf"),
             text => { parsed = text; return new List<string> { text }; },
-            _ => true);
+            records => ((long)records.Count, 0L));
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(json, parsed);
@@ -51,9 +51,9 @@ public class OtlpHttpBodyTests
         byte[]? parsed = null;
         var result = await OtlpV1Controller.ExportAsync(
             context.Request,
-            payload => { parsed = payload; return new List<string> { "parsed" }; },
+            (buffer, offset, count) => { parsed = buffer.Skip(offset).Take(count).ToArray(); return new List<string> { "parsed" }; },
             _ => throw new InvalidOperationException("Protobuf request was parsed as JSON"),
-            _ => true);
+            records => ((long)records.Count, 0L));
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(bytes, parsed);

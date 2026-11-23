@@ -12,6 +12,7 @@ namespace SData.Ingest.Api;
 [Route("/v1")]
 [Route("/api/v1")]
 [ServiceFilter(typeof(IngestApiKeyFilter))]
+[IngestBackpressure]
 public class OtlpV1Controller : ControllerBase
 {
     private readonly SData.Ingest.IIngestIngestor _ingestor;
@@ -38,7 +39,7 @@ public class OtlpV1Controller : ControllerBase
     [HttpPost("logs")]
     public Task<IActionResult> Logs()
     {
-        return RunAsync(Request, _protoParser.ParseLogs, _parser.ParseLogs, _ingestor.EnqueueLog);
+        return RunAsync(Request, _protoParser.ParseLogs, _parser.ParseLogs, _ingestor.EnqueueLogs);
     }
 
     /// <summary>
@@ -48,7 +49,7 @@ public class OtlpV1Controller : ControllerBase
     [HttpPost("traces")]
     public Task<IActionResult> Traces()
     {
-        return RunAsync(Request, _protoParser.ParseTraces, _parser.ParseTraces, _ingestor.EnqueueSpan);
+        return RunAsync(Request, _protoParser.ParseTraces, _parser.ParseTraces, _ingestor.EnqueueSpans);
     }
 
     /// <summary>
@@ -58,33 +59,34 @@ public class OtlpV1Controller : ControllerBase
     [HttpPost("metrics")]
     public Task<IActionResult> Metrics()
     {
-        return RunAsync(Request, _protoParser.ParseMetrics, _parser.ParseMetrics, _ingestor.EnqueueMetric);
+        return RunAsync(Request, _protoParser.ParseMetrics, _parser.ParseMetrics, _ingestor.EnqueueMetrics);
     }
 
-    private async Task<IActionResult> RunAsync<T>(
+    private Task<IActionResult> RunAsync<T>(
         HttpRequest request,
-        Func<byte[], List<T>> parseProto,
+        Func<byte[], int, int, List<T>> parseProto,
         Func<string, List<T>> parseJson,
-        Func<T, bool> enqueue)
+        Func<IReadOnlyList<T>, (long Accepted, long Dropped)> enqueueBatch)
     {
-        return await ExportAsync(request, parseProto, parseJson, enqueue, _ingestor.CanAcceptBytes);
+        return ExportAsync(request, parseProto, parseJson, enqueueBatch, _ingestor.CanAcceptBytes);
     }
 
     /// <summary>
-    /// 共享导出处理链：读体（gzip 解压）→ 按协议格式解析 → 逐条入缓冲 → OTLP 响应形状.
+    /// 共享导出处理链：读体（gzip 解压）→ 按协议格式解析 → 批量入缓冲 → OTLP 响应形状.
     /// 旧 IngestController 的 /ingest/otlp/v1/* 端点经自身注入的解析器转调本方法保持行为一致.
     /// </summary>
     /// <typeparam name="T">领域记录类型.</typeparam>
     /// <param name="request">HTTP 请求.</param>
-    /// <param name="parseProto">proto 字节解析（已解压）.</param>
+    /// <param name="parseProto">proto 字节解析（已解压，缓冲区切片免整包拷贝）.</param>
     /// <param name="parseJson">JSON 文本解析.</param>
-    /// <param name="enqueue">单条入缓冲（false = 缓冲满）.</param>
+    /// <param name="enqueueBatch">批量入缓冲（返回接受/丢弃条数）.</param>
+    /// <param name="canAcceptBytes">解析前字节预算预检（null 跳过）.</param>
     /// <returns>OTLP 响应.</returns>
     internal static async Task<IActionResult> ExportAsync<T>(
         HttpRequest request,
-        Func<byte[], List<T>> parseProto,
+        Func<byte[], int, int, List<T>> parseProto,
         Func<string, List<T>> parseJson,
-        Func<T, bool> enqueue,
+        Func<IReadOnlyList<T>, (long Accepted, long Dropped)> enqueueBatch,
         Func<long, bool>? canAcceptBytes = null)
     {
         List<T> records;
@@ -110,7 +112,8 @@ public class OtlpV1Controller : ControllerBase
 
             if (isProto)
             {
-                records = parseProto(payload.ToArray());
+                // 直接在 MemoryStream 内部缓冲上切片解析，省去整包 ToArray 拷贝
+                records = parseProto(payload.GetBuffer(), 0, checked((int)payload.Length));
             }
             else
             {
@@ -123,18 +126,9 @@ public class OtlpV1Controller : ControllerBase
             return new BadRequestObjectResult(new { message = "OTLP 报文解析失败，请检查协议格式与 Content-Type/Content-Encoding" });
         }
 
-        var accepted = 1;
-        foreach (var record in records)
-        {
-            if (!enqueue(record))
-            {
-                accepted = -1;
-                break;
-            }
-        }
-
-        // 接入端点只做内存缓冲，缓冲满时返回 429 并在 partialSuccess 中提示
-        if (accepted < 0)
+        // 批量入缓冲：部分接受（dropped>0）时返回 429 并在 partialSuccess 中提示
+        var (_, dropped) = enqueueBatch(records);
+        if (dropped > 0)
         {
             request.HttpContext.Response.Headers["Retry-After"] = "1";
             return new ObjectResult(new { partialSuccess = new { errorMessage = "buffer full, data dropped" } })

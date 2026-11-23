@@ -1,5 +1,6 @@
 using global::Xunit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using SData.Database;
@@ -191,7 +192,7 @@ public class SettingsTests
         var first = await handler.Handle(new SaveOtlpSettingsCommand(), default);
         Assert.Equal(OtlpHeaders.SecretMask, first.TraceHeaders);
         Assert.Equal("authorization=Bearer file-trace", harness.Provider.GetOtlp().TraceHeaders);
-        var response = await new QuerySettingsCommandHandler(harness.Provider, new SystemOptions(), new FakeRuntime()).Handle(new(), default);
+        var response = await new QuerySettingsCommandHandler(harness.Provider, new SystemOptions(), new FakeRuntime(), new ConfigurationBuilder().Build()).Handle(new(), default);
         Assert.Equal(OtlpHeaders.SecretMask, response.Otlp.MetricsHeaders);
         Assert.Equal("x-api-key=file-metrics", harness.Provider.GetOtlp().MetricsHeaders);
 
@@ -295,7 +296,7 @@ public class SettingsTests
         var restarted = new SystemSettingsProvider(new SystemOptions(), new SettingsHarness.SingleScopeFactory(harness.Db),
             new DefaultIdProvider(3), NullLogger<SystemSettingsProvider>.Instance);
         Assert.Equal("2GB", restarted.GetDuckDb().MemoryLimit);
-        var query = await new QuerySettingsCommandHandler(harness.Provider, new SystemOptions(), runtime).Handle(new(), default);
+        var query = await new QuerySettingsCommandHandler(harness.Provider, new SystemOptions(), runtime, new ConfigurationBuilder().Build()).Handle(new(), default);
         Assert.Equal(saved.EffectiveMemoryLimit, query.DuckDb.EffectiveMemoryLimit);
         var json = (await harness.Db.Settings.SingleAsync(x => x.Key == SettingKeys.DuckDb)).Value;
         Assert.DoesNotContain("path", json, StringComparison.OrdinalIgnoreCase);

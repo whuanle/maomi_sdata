@@ -37,7 +37,7 @@ public class IngestController : ControllerBase
     [HttpPost("otlp/v1/logs")]
     public Task<IActionResult> OtlpLogs()
     {
-        return OtlpV1Controller.ExportAsync(Request, _protoParser.ParseLogs, _parser.ParseLogs, _ingestor.EnqueueLog, _ingestor.CanAcceptBytes);
+        return OtlpV1Controller.ExportAsync(Request, _protoParser.ParseLogs, _parser.ParseLogs, _ingestor.EnqueueLogs, _ingestor.CanAcceptBytes);
     }
 
     /// <summary>
@@ -47,7 +47,7 @@ public class IngestController : ControllerBase
     [HttpPost("otlp/v1/traces")]
     public Task<IActionResult> OtlpTraces()
     {
-        return OtlpV1Controller.ExportAsync(Request, _protoParser.ParseTraces, _parser.ParseTraces, _ingestor.EnqueueSpan, _ingestor.CanAcceptBytes);
+        return OtlpV1Controller.ExportAsync(Request, _protoParser.ParseTraces, _parser.ParseTraces, _ingestor.EnqueueSpans, _ingestor.CanAcceptBytes);
     }
 
     /// <summary>
@@ -57,7 +57,7 @@ public class IngestController : ControllerBase
     [HttpPost("otlp/v1/metrics")]
     public Task<IActionResult> OtlpMetrics()
     {
-        return OtlpV1Controller.ExportAsync(Request, _protoParser.ParseMetrics, _parser.ParseMetrics, _ingestor.EnqueueMetric, _ingestor.CanAcceptBytes);
+        return OtlpV1Controller.ExportAsync(Request, _protoParser.ParseMetrics, _parser.ParseMetrics, _ingestor.EnqueueMetrics, _ingestor.CanAcceptBytes);
     }
 
     /// <summary>

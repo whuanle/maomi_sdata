@@ -41,6 +41,39 @@ public class IngestService : IIngestIngestor
     public bool EnqueueMetric(MetricPointRecord record) => _buffer.TryEnqueueMetric(record);
 
     /// <summary>
+    /// 批量日志入缓冲（OTLP 解析路径使用）.
+    /// </summary>
+    /// <param name="records">日志记录.</param>
+    /// <returns>接受/丢弃条数.</returns>
+    public (long Accepted, long Dropped) EnqueueLogs(IReadOnlyList<LogRecord> records)
+    {
+        var result = _buffer.TryEnqueueLogs(records);
+        return (result.Accepted, result.Dropped);
+    }
+
+    /// <summary>
+    /// 批量 span 入缓冲（OTLP 解析路径使用）.
+    /// </summary>
+    /// <param name="records">span 记录.</param>
+    /// <returns>接受/丢弃条数.</returns>
+    public (long Accepted, long Dropped) EnqueueSpans(IReadOnlyList<SpanRecord> records)
+    {
+        var result = _buffer.TryEnqueueSpans(records);
+        return (result.Accepted, result.Dropped);
+    }
+
+    /// <summary>
+    /// 批量指标点入缓冲（OTLP 解析路径使用）.
+    /// </summary>
+    /// <param name="records">指标点.</param>
+    /// <returns>接受/丢弃条数.</returns>
+    public (long Accepted, long Dropped) EnqueueMetrics(IReadOnlyList<MetricPointRecord> records)
+    {
+        var result = _buffer.TryEnqueueMetrics(records);
+        return (result.Accepted, result.Dropped);
+    }
+
+    /// <summary>
     /// 单条遥测入缓冲（OTLP 解析路径使用）.
     /// </summary>
     /// <param name="record">遥测记录.</param>

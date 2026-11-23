@@ -82,11 +82,12 @@ public static class TimeTables
     }
 
     /// <summary>
-    /// 生成建表 SQL（含链路 trace_id 索引）.
+    /// 生成建表 SQL（链路 trace_id 索引可按配置省略）.
     /// </summary>
     /// <param name="tableName">表名.</param>
+    /// <param name="traceIndexEnabled">是否创建链路 trace_id ART 索引.</param>
     /// <returns>建表语句列表.</returns>
-    public static IReadOnlyList<string> CreateSql(string tableName)
+    public static IReadOnlyList<string> CreateSql(string tableName, bool traceIndexEnabled = true)
     {
         if (tableName.StartsWith(MqConsumptionPrefix, StringComparison.Ordinal))
         {
@@ -103,11 +104,16 @@ public static class TimeTables
 
         if (tableName.StartsWith(TracesPrefix, StringComparison.Ordinal))
         {
-            return
-            [
+            var sql = new List<string>
+            {
                 $"CREATE TABLE IF NOT EXISTS {tableName} (trace_id VARCHAR NOT NULL, span_id VARCHAR NOT NULL, parent_span_id VARCHAR, ts TIMESTAMP NOT NULL, duration_us BIGINT NOT NULL, service VARCHAR NOT NULL, name VARCHAR NOT NULL, kind VARCHAR NOT NULL, status VARCHAR NOT NULL, attributes VARCHAR, events VARCHAR, resource VARCHAR)",
-                $"CREATE INDEX IF NOT EXISTS {tableName}_tid_idx ON {tableName} (trace_id)",
-            ];
+            };
+            if (traceIndexEnabled)
+            {
+                sql.Add($"CREATE INDEX IF NOT EXISTS {tableName}_tid_idx ON {tableName} (trace_id)");
+            }
+
+            return sql;
         }
 
         if (tableName.StartsWith(MetricsPrefix, StringComparison.Ordinal))

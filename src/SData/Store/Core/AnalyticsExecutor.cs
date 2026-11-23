@@ -244,9 +244,8 @@ public partial class AnalyticsExecutor : IAnalyticsExecutor
         rowLimit = Math.Clamp(rowLimit, 1, 10_000);
         using var queryLease = await _connectionManager.LockQueryAsync(cancellationToken);
 
-        // 驱动的异步调用底层同步执行；独立工作线程和周期 Cancel 确保截止时间中断原生查询。
-        return await Task.Run(async () =>
-        {
+        // 驱动的异步调用底层同步执行，直接在当前线程执行（避免 Task.Run 额外跳线）；
+        // 预算截止由惰性 watchdog（周期 Cancel）中断原生查询，覆盖取消先于执行的竞争窗口。
         cancellationToken.ThrowIfCancellationRequested();
         var started = DateTimeOffset.UtcNow;
         await using var connection = _connectionManager.CloneConnection();
@@ -318,7 +317,6 @@ public partial class AnalyticsExecutor : IAnalyticsExecutor
         {
             watchdog?.Dispose();
         }
-        }, CancellationToken.None);
     }
 
     /// <summary>

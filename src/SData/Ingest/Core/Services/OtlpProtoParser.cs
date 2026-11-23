@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using Google.Protobuf;
@@ -29,9 +30,11 @@ public static class OtlpProtoParser
     public static List<LogRecord> ParseLogs(ExportLogsServiceRequest request)
     {
         var records = new List<LogRecord>();
+        // 单请求内复用同一 JSON 写出缓冲，避免每条记录分配 MemoryStream + 中间数组
+        var jsonBuffer = new ArrayBufferWriter<byte>();
         foreach (var resourceLogs in request.ResourceLogs)
         {
-            var resourceJson = ResourceToJson(resourceLogs.Resource);
+            var resourceJson = ResourceToJson(resourceLogs.Resource, jsonBuffer);
             var service = OtlpJson.ExtractServiceName(resourceJson);
 
             foreach (var scopeLogs in resourceLogs.ScopeLogs)
@@ -53,7 +56,7 @@ public static class OtlpProtoParser
                         Body = AnyValueToString(logRecord.Body),
                         TraceId = BytesToHex(logRecord.TraceId),
                         SpanId = BytesToHex(logRecord.SpanId),
-                        AttributesJson = AttributesToJson(logRecord.Attributes),
+                        AttributesJson = AttributesToJson(logRecord.Attributes, jsonBuffer),
                         ResourceJson = resourceJson,
                     });
                 }
@@ -71,9 +74,11 @@ public static class OtlpProtoParser
     public static List<SpanRecord> ParseTraces(ExportTraceServiceRequest request)
     {
         var records = new List<SpanRecord>();
+        // 单请求内复用同一 JSON 写出缓冲，避免每条 span 分配 MemoryStream + 中间数组
+        var jsonBuffer = new ArrayBufferWriter<byte>();
         foreach (var resourceSpans in request.ResourceSpans)
         {
-            var resourceJson = ResourceToJson(resourceSpans.Resource);
+            var resourceJson = ResourceToJson(resourceSpans.Resource, jsonBuffer);
             var service = OtlpJson.ExtractServiceName(resourceJson);
 
             foreach (var scopeSpans in resourceSpans.ScopeSpans)
@@ -101,8 +106,8 @@ public static class OtlpProtoParser
                         Name = span.Name,
                         Kind = SpanKinds[Math.Clamp((int)span.Kind, 0, SpanKinds.Length - 1)],
                         Status = span.Status?.Code switch { Status.Types.StatusCode.Ok => "ok", Status.Types.StatusCode.Error => "error", _ => "unset" },
-                        AttributesJson = AttributesToJson(span.Attributes),
-                        EventsJson = EventsToJson(span.Events),
+                        AttributesJson = AttributesToJson(span.Attributes, jsonBuffer),
+                        EventsJson = EventsToJson(span.Events, jsonBuffer),
                         ResourceJson = resourceJson,
                     });
                 }
@@ -120,9 +125,10 @@ public static class OtlpProtoParser
     public static List<MetricPointRecord> ParseMetrics(ExportMetricsServiceRequest request)
     {
         var records = new List<MetricPointRecord>();
+        var jsonBuffer = new ArrayBufferWriter<byte>();
         foreach (var resourceMetrics in request.ResourceMetrics)
         {
-            var resourceJson = ResourceToJson(resourceMetrics.Resource);
+            var resourceJson = ResourceToJson(resourceMetrics.Resource, jsonBuffer);
             var service = OtlpJson.ExtractServiceName(resourceJson);
 
             foreach (var scopeMetrics in resourceMetrics.ScopeMetrics)
@@ -136,17 +142,17 @@ public static class OtlpProtoParser
 
                     if (metric.Gauge != null)
                     {
-                        ParsePoints(metric.Gauge.DataPoints, metric.Name, "gauge", resourceJson, service, records);
+                        ParsePoints(metric.Gauge.DataPoints, metric.Name, "gauge", resourceJson, service, jsonBuffer, records);
                     }
 
                     if (metric.Sum != null)
                     {
-                        ParsePoints(metric.Sum.DataPoints, metric.Name, "sum", resourceJson, service, records);
+                        ParsePoints(metric.Sum.DataPoints, metric.Name, "sum", resourceJson, service, jsonBuffer, records);
                     }
 
                     if (metric.Histogram != null)
                     {
-                        ParseHistogram(metric.Histogram.DataPoints, metric.Name, records);
+                        ParseHistogram(metric.Histogram.DataPoints, metric.Name, jsonBuffer, records);
                     }
                 }
             }
@@ -161,6 +167,7 @@ public static class OtlpProtoParser
         string kind,
         string? resourceJson,
         string service,
+        ArrayBufferWriter<byte> jsonBuffer,
         List<MetricPointRecord> records)
     {
         foreach (var point in points)
@@ -173,7 +180,7 @@ public static class OtlpProtoParser
             var timestamp = point.TimeUnixNano > 0
                 ? DateTimeOffset.FromUnixTimeMilliseconds((long)point.TimeUnixNano / 1_000_000)
                 : DateTimeOffset.UtcNow;
-            var labelsJson = AttributesToJson(point.Attributes);
+            var labelsJson = AttributesToJson(point.Attributes, jsonBuffer);
             if (labelsJson != null && resourceJson != null)
             {
                 labelsJson = $"{{\"service\":{JsonSerializer.Serialize(service)},\"labels\":{labelsJson}}}";
@@ -194,14 +201,14 @@ public static class OtlpProtoParser
         }
     }
 
-    private static void ParseHistogram(RepeatedField<HistogramDataPoint> points, string metricName, List<MetricPointRecord> records)
+    private static void ParseHistogram(RepeatedField<HistogramDataPoint> points, string metricName, ArrayBufferWriter<byte> jsonBuffer, List<MetricPointRecord> records)
     {
         foreach (var point in points)
         {
             var timestamp = point.TimeUnixNano > 0
                 ? DateTimeOffset.FromUnixTimeMilliseconds((long)point.TimeUnixNano / 1_000_000)
                 : DateTimeOffset.UtcNow;
-            var labelsJson = AttributesToJson(point.Attributes) ?? "{}";
+            var labelsJson = AttributesToJson(point.Attributes, jsonBuffer) ?? "{}";
             if (point.Count > 0)
             {
                 records.Add(new MetricPointRecord
@@ -258,28 +265,29 @@ public static class OtlpProtoParser
     /// <summary>
     /// resource → JSON 对象字符串（属性转 JSON，形状与 OtlpJson.AttributesToJson 一致）；无属性返回 null.
     /// </summary>
-    private static string? ResourceToJson(Resource? resource)
+    private static string? ResourceToJson(Resource? resource, ArrayBufferWriter<byte> buffer)
     {
-        return resource == null ? null : AttributesToJson(resource.Attributes);
+        return resource == null ? null : AttributesToJson(resource.Attributes, buffer);
     }
 
     /// <summary>
     /// proto KeyValue 属性列表 → JSON 对象字符串（{"key": value}）；空返回 null.
+    /// 写出复用调用方传入的缓冲（跨记录 Clear 复用），避免每条记录分配 MemoryStream 与中间数组.
     /// </summary>
-    private static string? AttributesToJson(RepeatedField<KeyValue> attributes)
+    private static string? AttributesToJson(RepeatedField<KeyValue> attributes, ArrayBufferWriter<byte> buffer)
     {
         if (attributes.Count == 0)
         {
             return null;
         }
 
-        using var buffer = new MemoryStream();
+        buffer.Clear();
         using (var writer = new Utf8JsonWriter(buffer))
         {
             WriteAttributes(writer, attributes);
         }
 
-        return Encoding.UTF8.GetString(buffer.ToArray());
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     private static void WriteAttributes(Utf8JsonWriter writer, RepeatedField<KeyValue> attributes)
@@ -382,15 +390,16 @@ public static class OtlpProtoParser
 
     /// <summary>
     /// span 事件列表 → JSON 数组字符串；空返回 null（与 JSON parser 的 GetRawText 形状一致）.
+    /// 写出复用调用方传入的缓冲，避免每条 span 分配 MemoryStream 与中间数组.
     /// </summary>
-    private static string? EventsToJson(RepeatedField<Span.Types.Event> events)
+    private static string? EventsToJson(RepeatedField<Span.Types.Event> events, ArrayBufferWriter<byte> buffer)
     {
         if (events.Count == 0)
         {
             return null;
         }
 
-        using var buffer = new MemoryStream();
+        buffer.Clear();
         using (var writer = new Utf8JsonWriter(buffer))
         {
             writer.WriteStartArray();
@@ -411,15 +420,33 @@ public static class OtlpProtoParser
             writer.WriteEndArray();
         }
 
-        return Encoding.UTF8.GetString(buffer.ToArray());
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
+
+    private static readonly string HexDigits = "0123456789abcdef";
 
     /// <summary>
     /// trace/span id（bytes）→ 小写 hex（与 OTLP JSON 字符串形态一致）；空返回 null.
+    /// 直接查表写出小写字符，避免 ToHexString + ToLowerInvariant 的两次中间字符串与数组拷贝.
     /// </summary>
     private static string? BytesToHex(ByteString bytes)
     {
-        return bytes.IsEmpty ? null : Convert.ToHexString(bytes.ToByteArray()).ToLowerInvariant();
+        if (bytes.IsEmpty)
+        {
+            return null;
+        }
+
+        var source = bytes.Span;
+        var hexLength = source.Length * 2;
+        Span<char> hex = hexLength <= 128 ? stackalloc char[128] : new char[hexLength];
+        for (var i = 0; i < source.Length; i++)
+        {
+            var b = source[i];
+            hex[i * 2] = HexDigits[b >> 4];
+            hex[i * 2 + 1] = HexDigits[b & 0xF];
+        }
+
+        return new string(hex[..hexLength]);
     }
 
     /// <summary>

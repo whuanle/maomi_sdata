@@ -94,6 +94,9 @@ public class IngestAuthenticationIntegrationTests
         public bool EnqueueLog(SData.Store.Models.LogRecord record) => true;
         public bool EnqueueSpan(SData.Store.Models.SpanRecord record) => true;
         public bool EnqueueMetric(SData.Store.Models.MetricPointRecord record) => true;
+        public (long Accepted, long Dropped) EnqueueLogs(IReadOnlyList<SData.Store.Models.LogRecord> records) => (records.Count, 0);
+        public (long Accepted, long Dropped) EnqueueSpans(IReadOnlyList<SData.Store.Models.SpanRecord> records) => (records.Count, 0);
+        public (long Accepted, long Dropped) EnqueueMetrics(IReadOnlyList<SData.Store.Models.MetricPointRecord> records) => (records.Count, 0);
         public bool EnqueueTelemetry(SData.Store.Models.TelemetryRecord record) => true;
         public IngestResponse IngestLogs(IEnumerable<IngestLogItem> items) => new();
         public IngestResponse IngestSpans(IEnumerable<IngestSpanItem> items) => new();
