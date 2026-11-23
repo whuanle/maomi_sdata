@@ -16,7 +16,9 @@ namespace SData.Store;
 /// <summary>
 /// 冷存档后台服务（T512）：把超过热存期且未归档的天表 COPY TO parquet → 行数校验 → 落台账 → DROP + CHECKPOINT.
 /// 冻结批次独立归档；失败保留本地批次重试，迟到数据追加新批次，台账发布后清理热副本。
-/// 未配置 S3 时写本地冷存目录（data/cold/{domain}/{day}.parquet），与 T510 查询通配兼容（本地路径通配可查询）.
+/// 双写并存（本地磁盘冷备）：本地冷存目录（data/cold/{domain}/{day[_HH]}.parquet）恒有副本且与 S3 桶内结构同构，
+/// 配置 S3 时每分片追写 s3:// 副本并各落一行台账；未配置 S3 时仅本地（与 T510 查询通配兼容）。
+/// 任一目的地失败整轮失败不落台账（全有或全无），下轮覆盖半写重试.
 /// </summary>
 public class ArchiveService : BackgroundService
 {
@@ -169,20 +171,29 @@ public class ArchiveService : BackgroundService
             }, cancellationToken);
         if (rowCount == 0)
         {
+            var dayString = FormatDay(day);
+            var emptyRows = new List<(string ObjectKey, long RowCount)> { (BatchObjectKey(LocalArchiveKey(domain, dayString), batchId), 0L) };
+            var emptyS3Key = S3ArchiveKey(domain, dayString, _settingsProvider.GetS3());
+            if (emptyS3Key != null)
+            {
+                emptyRows.Add((BatchObjectKey(emptyS3Key, batchId), 0L));
+            }
+
             using var handoff = await _connectionManager.ChangeSourcesAsync(cancellationToken);
-            await SaveLedgerRowsAsync(domain, day, [(BatchObjectKey(ResolveObjectKey(domain, day), batchId), 0L)], cancellationToken);
+            await SaveLedgerRowsAsync(domain, day, emptyRows, cancellationToken);
             _connectionManager.HidePublishedSnapshot(table);
             await _connectionManager.DropTableAsync(table, cancellationToken);
             return 0;
         }
 
+        var s3 = _settingsProvider.GetS3();
         var codec = _settingsProvider.GetCompression().ArchiveParquetCodec;
-        var hourly = IsHourly(_settingsProvider.GetS3().ArchiveGranularity);
-        var shards = (hourly ? BuildHourShards(domain, day) : [(FormatDay(day), ResolveObjectKey(domain, day))])
-            .Select(shard => (ShardName: batchId + "_" + shard.Item1, ObjectKey: BatchObjectKey(shard.Item2, batchId))).ToList();
+        var hourly = IsHourly(s3.ArchiveGranularity);
+        var plan = BuildShardPlan(domain, day, s3);
         var ledgerRows = new List<(string ObjectKey, long RowCount)>();
+        var shardTotal = 0;
 
-        foreach (var (shardName, objectKey) in shards)
+        foreach (var (shardName, localKey, s3Key) in plan)
         {
             var filter = hourly
                 ? $" WHERE ts >= TIMESTAMP '{day:yyyy-MM-dd} {shardName[^2..]}:00:00' AND ts < TIMESTAMP '{day:yyyy-MM-dd} {shardName[^2..]}:00:00' + INTERVAL '1 hour'"
@@ -200,46 +211,55 @@ public class ArchiveService : BackgroundService
                 continue; // 小时粒度跳过空分片（不生成对象与台账行）
             }
 
-            var destination = objectKey.StartsWith("s3://", StringComparison.Ordinal)
-                ? objectKey
-                : Path.Combine(AppConst.GetPath(), objectKey);
-            PrepareDestination(destination);
-            await _connectionManager.ExecuteMaintenanceAsync(
-                $"COPY (SELECT * FROM {table}{filter} ORDER BY {SortKeys(domain)}) TO '{destination.Replace("'", "''")}' (FORMAT PARQUET, COMPRESSION {codec})",
-                cancellationToken: cancellationToken);
-
-            var archivedCount = await _connectionManager.QueryAsync(
-                $"SELECT count(*) FROM read_parquet('{destination.Replace("'", "''")}')",
-                null,
-                async reader =>
-                {
-                    await reader.ReadAsync(cancellationToken);
-                    return reader.GetInt64(0);
-                }, cancellationToken);
-            if (archivedCount != shardCount)
+            foreach (var objectKey in ShardObjectKeys(localKey, s3Key))
             {
-                throw new InvalidOperationException($"归档行数校验失败：{table} 分片 {shardName} 原始 {shardCount} 行，parquet {archivedCount} 行");
+                var batchKey = BatchObjectKey(objectKey, batchId);
+                var destination = batchKey.StartsWith("s3://", StringComparison.Ordinal)
+                    ? batchKey
+                    : Path.Combine(AppConst.GetPath(), batchKey);
+                PrepareDestination(destination);
+                await _connectionManager.ExecuteMaintenanceAsync(
+                    $"COPY (SELECT * FROM {table}{filter} ORDER BY {SortKeys(domain)}) TO '{destination.Replace("'", "''")}' (FORMAT PARQUET, COMPRESSION {codec})",
+                    cancellationToken: cancellationToken);
+
+                var archivedCount = await _connectionManager.QueryAsync(
+                    $"SELECT count(*) FROM read_parquet('{destination.Replace("'", "''")}')",
+                    null,
+                    async reader =>
+                    {
+                        await reader.ReadAsync(cancellationToken);
+                        return reader.GetInt64(0);
+                    }, cancellationToken);
+                if (archivedCount != shardCount)
+                {
+                    throw new InvalidOperationException($"归档行数校验失败：{table} 分片 {batchId}_{shardName} 目的地 {batchKey} 原始 {shardCount} 行，parquet {archivedCount} 行");
+                }
+
+                ledgerRows.Add((batchKey, shardCount));
             }
 
-            // 词项索引 sidecar（T518）：本地镜像（查询候选天裁剪零网络）+ S3 备份；
+            // 词项索引 sidecar（T518）：本地镜像（查询候选天裁剪零网络）恒建；S3 配置时对 s3:// 分片追建远端索引。
             // 在落台账之前构建——失败则整轮归档失败（不落台账），下一轮覆盖重试，保持幂等语义
             if (domain == DataDomain.Logs)
             {
-                var idxMirror = ColdTermIndex.LocalMirrorPath(DomainName(domain), shardName);
+                var idxMirror = ColdTermIndex.LocalMirrorPath(DomainName(domain), batchId + "_" + shardName);
                 Directory.CreateDirectory(Path.GetDirectoryName(idxMirror)!);
                 await _connectionManager.ExecuteMaintenanceAsync(
                     ColdTermIndex.BuildIndexSql(table, idxMirror, codec),
                     cancellationToken: cancellationToken);
-                var idxKey = ColdTermIndex.ToIdxKey(objectKey);
-                if (idxKey.StartsWith("s3://", StringComparison.Ordinal))
+                if (s3Key != null)
                 {
-                    await _connectionManager.ExecuteMaintenanceAsync(
-                        ColdTermIndex.BuildIndexSql(table, idxKey, codec),
-                        cancellationToken: cancellationToken);
+                    var idxKey = ColdTermIndex.ToIdxKey(BatchObjectKey(s3Key, batchId));
+                    if (idxKey.StartsWith("s3://", StringComparison.Ordinal))
+                    {
+                        await _connectionManager.ExecuteMaintenanceAsync(
+                            ColdTermIndex.BuildIndexSql(table, idxKey, codec),
+                            cancellationToken: cancellationToken);
+                    }
                 }
             }
 
-            ledgerRows.Add((objectKey, shardCount));
+            shardTotal++;
         }
 
         using (await _connectionManager.ChangeSourcesAsync(cancellationToken))
@@ -249,7 +269,7 @@ public class ArchiveService : BackgroundService
             await _connectionManager.DropTableAsync(table, cancellationToken);
         }
         await _connectionManager.ExecuteMaintenanceAsync("CHECKPOINT", cancellationToken: cancellationToken);
-        _logger.LogInformation("Archived {Table} → {Shards} shards ({Rows} rows, {Granularity} granularity, index mirrored)", table, ledgerRows.Count, rowCount, hourly ? "hour" : "day");
+        _logger.LogInformation("Archived {Table} → {Shards} shards / {Objects} objects ({Rows} rows, {Granularity} granularity, index mirrored)", table, shardTotal, ledgerRows.Count, rowCount, hourly ? "hour" : "day");
         return rowCount;
     }
 
@@ -264,28 +284,70 @@ public class ArchiveService : BackgroundService
     }
 
     /// <summary>
-    /// 小时分片计划：一天 24 个分片（yyyyMMddHH 命名，对象与索引同名不同后缀），空分片在归档时跳过.
+    /// 归档分片计划（双写并存）：本地冷存键恒有（data/cold 与 S3 桶内结构同构：{folder}/{day[_HH]}.parquet），
+    /// 配置 S3 时每分片追加分片 s3:// 副本键；day 粒度一天一分片、hour 粒度一天 24 分片（yyyyMMddHH 命名，
+    /// 对象与索引同名不同后缀），空分片在归档时跳过.
     /// </summary>
     /// <param name="domain">数据域.</param>
     /// <param name="day">天.</param>
-    /// <returns>(分片名, 对象键) 列表.</returns>
-    private List<(string ShardName, string ObjectKey)> BuildHourShards(DataDomain domain, DateTimeOffset day)
+    /// <param name="s3">S3 配置（Endpoint/Bucket 为空 = 未配置，仅本地）.</param>
+    /// <returns>(分片名, 本地对象键, S3 对象键或 null) 列表.</returns>
+    internal static List<(string ShardName, string LocalKey, string? S3Key)> BuildShardPlan(DataDomain domain, DateTimeOffset day, S3Options s3)
     {
         var dayString = FormatDay(day);
-        var folder = DomainFolder(domain);
-        var s3 = _settingsProvider.GetS3();
-        var useS3 = !string.IsNullOrWhiteSpace(s3.Endpoint) && !string.IsNullOrWhiteSpace(s3.Bucket);
-        var prefixPath = useS3 && !string.IsNullOrWhiteSpace(s3.Prefix) ? s3.Prefix.TrimEnd('/') + "/" : string.Empty;
-        var list = new List<(string, string)>();
-        for (var hour = 0; hour < 24; hour++)
+        var list = new List<(string, string, string?)>();
+        if (IsHourly(s3.ArchiveGranularity))
         {
-            var objectKey = useS3
-                ? $"s3://{s3.Bucket}/{prefixPath}{folder}/{dayString}{hour:00}.parquet"
-                : Path.Combine("data", "cold", folder, $"{dayString}{hour:00}.parquet");
-            list.Add(($"{dayString}{hour:00}", objectKey));
+            for (var hour = 0; hour < 24; hour++)
+            {
+                var shard = $"{dayString}{hour:00}";
+                list.Add((shard, LocalArchiveKey(domain, shard), S3ArchiveKey(domain, shard, s3)));
+            }
+        }
+        else
+        {
+            list.Add((dayString, LocalArchiveKey(domain, dayString), S3ArchiveKey(domain, dayString, s3)));
         }
 
         return list;
+    }
+
+    /// <summary>分片写入目的地（本地先、S3 后）：双写并存返回两键，未配置 S3 仅本地.</summary>
+    /// <param name="localKey">本地对象键.</param>
+    /// <param name="s3Key">S3 对象键或 null.</param>
+    /// <returns>对象键序列.</returns>
+    private static IEnumerable<string> ShardObjectKeys(string localKey, string? s3Key)
+    {
+        yield return localKey;
+        if (s3Key != null)
+        {
+            yield return s3Key;
+        }
+    }
+
+    /// <summary>本地冷存基础对象键（相对 ContentRoot；与 S3 桶内结构同构）.</summary>
+    /// <param name="domain">数据域.</param>
+    /// <param name="dayString">分片名（yyyyMMdd 或 yyyyMMddHH）.</param>
+    /// <returns>相对路径对象键.</returns>
+    private static string LocalArchiveKey(DataDomain domain, string dayString)
+    {
+        return Path.Combine("data", "cold", DomainFolder(domain), $"{dayString}.parquet");
+    }
+
+    /// <summary>S3 基础对象键；Endpoint/Bucket 未配置返回 null.</summary>
+    /// <param name="domain">数据域.</param>
+    /// <param name="dayString">分片名（yyyyMMdd 或 yyyyMMddHH）.</param>
+    /// <param name="s3">S3 配置.</param>
+    /// <returns>s3:// 对象键或 null.</returns>
+    private static string? S3ArchiveKey(DataDomain domain, string dayString, S3Options s3)
+    {
+        if (string.IsNullOrWhiteSpace(s3.Endpoint) || string.IsNullOrWhiteSpace(s3.Bucket))
+        {
+            return null;
+        }
+
+        var prefixPath = string.IsNullOrWhiteSpace(s3.Prefix) ? string.Empty : s3.Prefix.TrimEnd('/') + "/";
+        return $"s3://{s3.Bucket}/{prefixPath}{DomainFolder(domain)}/{dayString}.parquet";
     }
 
     /// <summary>仅本地归档准备目录；S3 URI 由 DuckDB httpfs 处理.</summary>
@@ -309,19 +371,6 @@ public class ArchiveService : BackgroundService
         var normalized = key.Replace('\\', '/');
         var slash = normalized.LastIndexOf('/');
         return normalized[..(slash + 1)] + batchId + "/" + normalized[(slash + 1)..];
-    }
-
-    internal string ResolveObjectKey(DataDomain domain, DateTimeOffset day)
-    {
-        var dayString = FormatDay(day);
-        var s3 = _settingsProvider.GetS3();
-        if (!string.IsNullOrWhiteSpace(s3.Endpoint) && !string.IsNullOrWhiteSpace(s3.Bucket))
-        {
-            var prefixPath = string.IsNullOrWhiteSpace(s3.Prefix) ? string.Empty : s3.Prefix.TrimEnd('/') + "/";
-            return $"s3://{s3.Bucket}/{prefixPath}{DomainFolder(domain)}/{dayString}.parquet";
-        }
-
-        return Path.Combine("data", "cold", DomainFolder(domain), $"{dayString}.parquet");
     }
 
     private static string DomainFolder(DataDomain domain)
@@ -365,8 +414,8 @@ public class ArchiveService : BackgroundService
     }
 
     /// <summary>
-    /// 落台账（一域一天一批；day 粒度一行、hour 粒度多行）：
-    /// 每个冻结批次追加独立对象行，已发布批次恢复时仅清理本地副本。
+    /// 落台账（一域一天一批；一个对象键一行：day 粒度每介质一行、hour 粒度每介质多行）：
+    /// 每个冻结批次追加独立对象行（双写并存时本地与 S3 各一行），已发布批次恢复时仅清理本地副本。
     /// </summary>
     /// <param name="domain">数据域.</param>
     /// <param name="day">天.</param>

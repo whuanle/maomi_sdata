@@ -366,11 +366,46 @@ namespace SData.Store.Tests;
         Assert.Equal(1, (await harness.GetLedgerAsync("logs")).Count);
     }
 
-    /// <summary>运行时 S3 覆盖：设置页保存 S3 后对象键立即指向桶（无需重启）.</summary>
+    /// <summary>分片计划纯函数：本地键恒有（data/cold 与 S3 桶内结构同构），配置 S3 后追加分片 s3:// 双键；hour 粒度 24 分片.</summary>
     [Fact]
-    public void Archive_UsesRuntimeS3OverrideForObjectKey()
+    public void Archive_ShardPlan_LocalAlwaysS3WhenConfigured()
+    {
+        var day = new DateTimeOffset(2020, 11, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // 未配置 S3：仅本地键
+        var plan = ArchiveService.BuildShardPlan(DataDomain.Logs, day, new S3Options());
+        var shard = Assert.Single(plan);
+        Assert.Equal("20201101", shard.ShardName);
+        Assert.Equal(Path.Combine("data", "cold", "logs", "20201101.parquet"), shard.LocalKey);
+        Assert.Null(shard.S3Key);
+
+        // 配置 S3：本地 + s3:// 双键
+        var dual = ArchiveService.BuildShardPlan(DataDomain.Logs, day, new S3Options { Endpoint = "http://minio:9000", Bucket = "bkt", Prefix = "pfx" });
+        var dualShard = Assert.Single(dual);
+        Assert.Equal(Path.Combine("data", "cold", "logs", "20201101.parquet"), dualShard.LocalKey);
+        Assert.Equal("s3://bkt/pfx/logs/20201101.parquet", dualShard.S3Key);
+
+        // hour 粒度：24 分片，逐分片双键
+        var hourly = ArchiveService.BuildShardPlan(DataDomain.Metrics, day, new S3Options { Endpoint = "http://minio:9000", Bucket = "bkt", ArchiveGranularity = "hour" });
+        Assert.Equal(24, hourly.Count);
+        Assert.Equal("2020110100", hourly[0].ShardName);
+        Assert.Equal("2020110123", hourly[23].ShardName);
+        Assert.All(hourly, item => Assert.Equal($"s3://bkt/metrics/{item.ShardName}.parquet", item.S3Key));
+        Assert.All(hourly, item => Assert.Equal(Path.Combine("data", "cold", "metrics", $"{item.ShardName}.parquet"), item.LocalKey));
+    }
+
+    /// <summary>运行时 S3 覆盖：设置页保存 S3 后分片计划立即含本地与 s3:// 双目的地（双写并存，无需重启）.</summary>
+    [Fact]
+    public void Archive_UsesRuntimeS3OverrideForObjectKeys()
     {
         using var harness = new ArchiveHarness(); // 文件未配 S3
+        var day = new DateTimeOffset(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero);
+
+        var localOnly = ArchiveService.BuildShardPlan(DataDomain.Logs, day, harness.Settings.GetS3());
+        var single = Assert.Single(localOnly);
+        Assert.Null(single.S3Key);
+        Assert.EndsWith($"data/cold/logs/{day:yyyyMMdd}.parquet", single.LocalKey.Replace('\\', '/'));
+
         var s3 = new S3Options
         {
             Endpoint = "http://minio.local:9000",
@@ -381,8 +416,33 @@ namespace SData.Store.Tests;
         };
         harness.Settings.SaveAsync(SettingKeys.S3, System.Text.Json.JsonSerializer.Serialize(s3), harness.Token).GetAwaiter().GetResult();
 
-        var key = Pin(harness).Archive.ResolveObjectKey(DataDomain.Logs, DateTimeOffset.UtcNow.Date);
-        Assert.StartsWith("s3://sdata-cold/sdata/archive/logs/", key);
+        var plan = ArchiveService.BuildShardPlan(DataDomain.Logs, day, harness.Settings.GetS3());
+        var dualShard = Assert.Single(plan);
+        Assert.EndsWith($"data/cold/logs/{day:yyyyMMdd}.parquet", dualShard.LocalKey.Replace('\\', '/'));
+        Assert.StartsWith("s3://sdata-cold/sdata/archive/logs/", dualShard.S3Key);
+        Assert.EndsWith($"{day:yyyyMMdd}.parquet", dualShard.S3Key);
+    }
+
+    /// <summary>双写并存全有或全无：S3 不可达时整轮失败——本地副本已先行落盘（本地先、S3 后）、台账不落、冻结表保留待重试.</summary>
+    [Fact]
+    public async Task Archive_DualWrite_S3Failure_FailsWholeBatch()
+    {
+        using var harness = new ArchiveHarness(options =>
+        {
+            options.Retention.Logs.HotDays = 7;
+            options.S3.Endpoint = "http://127.0.0.1:1"; // 环回保留端口，连接立即失败
+            options.S3.Bucket = "sdata-cold";
+        });
+        var day = DateTimeOffset.UtcNow.Date.AddDays(-40);
+        await harness.CreateDayTableWithRowsAsync(TimeTables.LogsPrefix, day, 2);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => Pin(harness).Archive.RunOnceAsync(harness.Token));
+
+        Assert.True(
+            Directory.GetFiles(Path.Combine(harness.TempDirectory, "data", "cold", "logs"), "*.parquet", SearchOption.AllDirectories).Length > 0,
+            "本地副本应先行落盘");
+        Assert.Empty(await harness.GetLedgerAsync("logs")); // 全有或全无：任一目的地失败不落台账
+        Assert.Contains(harness.Manager.GetManagedTables(TimeTables.LogsPrefix), TimeTables.IsArchive); // 冻结表保留，下轮重试
     }
 
     /// <summary>冷存档测试夹具（DuckDB + SQLite 台账 + 双服务）.</summary>

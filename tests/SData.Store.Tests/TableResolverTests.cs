@@ -195,6 +195,42 @@ public class TableResolverTests
         Assert.Contains(resolved.ColdFiles, file => file.EndsWith("20200102.parquet", StringComparison.Ordinal));
     }
 
+    /// <summary>双写并存去重（T512）：同分片的本地与 S3 两行台账派生相同 ShardName——仅收录本地路径（绝对路径直读），S3 副本跳过防重复扫描.</summary>
+    [Fact]
+    public async Task Resolve_DualWriteShard_PrefersLocalOverS3()
+    {
+        using var harness = new ResolverHarness();
+        var d1 = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var batchId = Guid.NewGuid().ToString("N");
+        harness.Ledger.ColdArchives.AddRange(
+            new ColdArchiveEntity { Domain = "logs", Day = "20200101", ObjectKey = $"data/cold/logs/{batchId}/20200101.parquet", RowCount = 3, ArchivedTime = DateTimeOffset.UtcNow },
+            new ColdArchiveEntity { Domain = "logs", Day = "20200101", ObjectKey = $"s3://bkt/pfx/logs/{batchId}/20200101.parquet", RowCount = 3, ArchivedTime = DateTimeOffset.UtcNow });
+        harness.Ledger.SaveChanges();
+
+        var resolved = await harness.Resolver.ResolveAsync(DataDomain.Logs, d1, d1.AddDays(1));
+
+        var file = Assert.Single(resolved.ColdFiles);
+        Assert.StartsWith(harness.TempDirectory, file, StringComparison.Ordinal);
+        Assert.EndsWith($"/data/cold/logs/{batchId}/20200101.parquet", file.Replace('\\', '/'), StringComparison.Ordinal);
+    }
+
+    /// <summary>双写并存兼容（T512）：升级前的 S3-only 历史分片（无本地副本）台账驱动仍解析 s3:// 路径.</summary>
+    [Fact]
+    public async Task Resolve_S3OnlyShard_StillResolvesS3Path()
+    {
+        using var harness = new ResolverHarness();
+        var d1 = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var s3OnlyBatch = Guid.NewGuid().ToString("N");
+        harness.Ledger.ColdArchives.Add(
+            new ColdArchiveEntity { Domain = "logs", Day = "20200102", ObjectKey = $"s3://bkt/pfx/logs/{s3OnlyBatch}/20200102.parquet", RowCount = 2, ArchivedTime = DateTimeOffset.UtcNow });
+        harness.Ledger.SaveChanges();
+
+        var resolved = await harness.Resolver.ResolveAsync(DataDomain.Logs, d1, d1.AddDays(2));
+
+        var file = Assert.Single(resolved.ColdFiles);
+        Assert.Equal($"s3://bkt/pfx/logs/{s3OnlyBatch}/20200102.parquet", file);
+    }
+
     /// <summary>本地冷目录兜底（T515）：未配 S3、台账为空时，data/cold 存在归档对象则输出目录通配.</summary>
     [Fact]
     public async Task Resolve_NoS3_NoLedger_LocalColdDirFallback()

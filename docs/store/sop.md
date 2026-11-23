@@ -35,8 +35,9 @@
 | 验存/连接测试报 `NoSuchBucket: The specified bucket does not exist` | 两种成因：① Bucket 在端点上不存在（S3 协议不自动建桶）——用 MinIO 控制台（:9001）或 `mc mb` 先建桶，或核对设置页 Bucket 名（示例里 `sdata` 是 AccessKey，示例桶名是 `sdata-cold`）；② 历史版本重启后 DuckDB SECRET 丢失，请求走了默认 AWS 端点（日志特征 `in region ''`）——现版本启动即按设置页持久化值重建 SECRET（@STORE-COLD5），升级重启即可。查询不受影响（fail-open + 探测熔断 @STORE-COLD6，每个窗口每域最多一次验存延迟，其余查询零开销走本地热数据） |
 | 配置了 S3 后搜索页变慢 | 历史版本验存探测逐查询同步打 S3（端点故障时一次探测拖住整次查询）；现版本探测结果按窗口缓存（@STORE-COLD6：命中 60s/零命中 30s/异常熔断 5min）。仍慢请先看启动日志有无 `S3 SECRET created`（无则 SECRET 未建，升级重启）；再测端点连通性（MinIO 控制台 :9001 可打开即端点正常） |
 | S3 连接/冷读报无法解析 `bucket.192.168.x.x` 类域名 | IP 端点不能走虚主机寻址；本服务 DuckDB SECRET 固定 `URL_STYLE 'path'`（与 AWSSDK 通道 ForcePathStyle 一致），若自改 SECRET 去掉该项即复现 |
-| 桶里只有连接测试对象，没有业务数据 | 确认已部署修复版；S3 页本地保留设 1 天并保存，数据保留页核对冷存>0（两页分别编辑本地与冷存天数）。UTC 零点后昨天的天表进入下一轮十分钟扫描；查看 `Archive sweep failed` 与 `Archived` 日志，核对业务目录 Parquet/索引和台账；连接成功不等于正式归档成功。未配置 S3 时仅写本地，既有本地冷对象不会自动迁移 |
+| 桶里只有连接测试对象，没有业务数据 | 确认已部署修复版；S3 页本地保留设 1 天并保存，数据保留页核对冷存>0（两页分别编辑本地与冷存天数）。UTC 零点后昨天的天表进入下一轮十分钟扫描；查看 `Archive sweep failed` 与 `Archived` 日志，核对业务目录 Parquet/索引和台账；连接成功不等于正式归档成功。归档恒写本地 data/cold/（本地冷备与桶内结构同构），配置 S3 后同时写桶（@STORE-ARCH13）；升级前仅写 S3 的历史对象无本地副本，查询走 S3 通道，不会自动迁移 |
 | 归档后天表消失、数据变慢 | 该天表已转冷层 parquet（台账 `cold_archive` 可查对象键）；长区间走 `metrics_rollup_1h`（T312），冷层 parquet 经 read_parquet UNION 查询（T510） |
+| 双写后磁盘占用翻倍 / 归档停滞 | 冷备双写并存：归档恒写本地 data/cold/（与桶内结构同构），配置 S3 后每分片同时写桶副本（@STORE-ARCH13）。本地磁盘满会阻塞归档批次（全有或全无 @STORE-ARCH14，本地为硬性目的地）——扩容 data 卷或关闭冷存；失败批次自动重试，不要手工删台账 |
 
 - 分析占位符 `{{sessions}}` / `{{rum_events}}` 统一解析当前范围的 RUM 会话/事件冷热来源；无来源时返回空结果。不要以客户端输入拼接表名。Agent 的目录、结构化查询与截断处置见 [Agents运维](../agents/sop.md)，冷完整性未知不能当作全量结果。
 
@@ -52,6 +53,6 @@
 2. 在设置页「S3 冷存储」填写 Endpoint `http://localhost:9000`、Bucket `sdata-cold`、Prefix `sdata/archive`、Access Key `sdata`、Secret Key `sdata12345`，保存即重建 S3 SECRET，无需重启（S3 不再从配置文件读取）。端点带/不带 `http(s)://` 前缀均可（自动归一化为裸 host[:port]）；MinIO 的账号/密码即 Access Key/Secret Key（S3 协议仅此一种认证形式，设置页直接填入即可）。
 3. 空桶首配验证（@STORE-COLD4，桶内尚无任何域对象时）：保存 S3 设置 → 连接测试（写 `.sdata-conn-test.parquet` 测试对象，空桶可写即通过）→ 立即对日志/指标/链路各域发起搜索与数据分析，均应正常返回本地热数据（glob 验存零命中跳过冷层，日志见 Debug「兜底通配零命中」；端点不可达时为 Warning「验存失败」，本地查询同样可用）。
 4. 在设置页「三段保留」配置各域 HotDays/ColdDays（对应 `SData:Retention:{Domain}`），使存在待归档天表（或手工构造历史天表），等待 ArchiveService 一轮（≤10 分钟）。
-5. 归档一致性验证：记下归档前台表查询结果 → 归档后天表已 DROP → 用 `POST /api/{domain}/search`（同 range）复查，结果一致（同 range 需在 MaxQueryDays 内）；台账核对 `SQLite cold_archive` 的对象键与行数。
+5. 归档一致性验证：记下归档前台表查询结果 → 归档后天表已 DROP → 用 `POST /api/{domain}/search`（同 range）复查，结果一致（同 range 需在 MaxQueryDays 内）；台账核对 `SQLite cold_archive` 的对象键与行数（双写并存：同分片本地与 S3 各一行，行数一致）。
 6. e2e（MinIO/真实 S3）无环境时标「e2e 待集成窗」；S3 超期对象清理同窗补验（本地冷目录清理已由阻塞/故障回归覆盖，网络删除不占源切换锁）。
 - 四类归档验收：logs/metrics/traces 与 rum_session/rum_event/rum_replay 分别核对对象、台账、归档前后查询。新批次目录不可手工合并覆盖；失败保留内部 archive 批次，重启自动恢复，禁止直接删除这些表。启动首轮仍等待十分钟，保存不是立即上传。

@@ -11,11 +11,18 @@
 - 并发组不主动取消正在发布的构建；GitHub 并发队列不保证版本排序，回发旧稳定 tag 也会更新 latest，回滚或补发时应知悉。
 - 固定 `linux/amd64`：Dockerfile 使用 `linux-x64` DuckDB 原生绑定，未声称支持 ARM64。
 - GHA 层缓存作用域 `sdata`；关闭 provenance/SBOM 附加 manifest，与 moai 发布方式一致。
+- `.github/workflows/docker-verify.yml`（push main / PR 触发，纯文档变更跳过）：构建 Dockerfile（不推送）→ 容器 `/health` 冒烟 → 镜像体积写入 Summary；GHA 缓存 scope 与发布共用 `sdata`，发布 tag 构建直接命中热缓存。
+- `build-and-push` 推送前门禁：镜像先载入构建机本地冒烟（60s 内 `/health` 200），通过才逐标签 `docker push`——坏镜像不会到达 Docker Hub；Summary 记录镜像体积（MB）与 manifest digest（`docker buildx imagetools inspect`，替代 buildx 原地推送时不可用的 `outputs.digest`）。
 
 ## 镜像边界
 
 - Node 22 / pnpm 10 构建时先类型检查，生成主应用和 `wwwroot/rum/probe.js`；.NET 10 分阶段发布宿主。
+- 运行层 = `debian:bookworm-slim` + 自包含单文件产物（不再基于 `aspnet:10.0` 共享运行时）：backend-build 阶段以 `--self-contained true -r linux-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false -p:EnableCompressionInSingleFile=true -p:PublishReadyToRun=false -p:PublishTrimmed=false -p:DebugType=None` 发布——托管程序集与运行时压缩进单文件 `SData`，原生库（libduckdb 等）松散随 apphost 放置（与旧框架依赖发布同布局，加载路径已被现网验证），启动零自解压开销、不依赖 /tmp 可执行；镜像内不带 PDB。
+  - 与 CI 独立包的差异：独立包用 `IncludeNativeLibrariesForSelfExtract=true` 换取单文件便携性（运行时解压到临时目录）；镜像内不需要该便携性，关闭自解压换启动速度与稳定性（/tmp noexec 环境不受影响）。不裁剪、不 R2R 的原因同独立包（Maomi/MCP 反射；R2R 只增体积）。
+- 运行层自带依赖（apt，`--no-install-recommends`）：`ca-certificates`（S3 https 端点）、`libssl3`/`zlib1g`/`libstdc++6`（原生库运行依赖）、`tzdata`、`wget`（docker-compose healthcheck）。musl/Alpine 不支持（DuckDB 等原生库仅出 glibc 绑定），与独立包口径一致。
+- 全球化运行于 invariant 模式（`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`，镜像内不装 libicu，省约 40MB）：业务代码全部显式 InvariantCulture、无 TimeZoneInfo 用法，且容器内本就无 locale（CurrentCulture 恒为 invariant，行为与旧镜像一致）。需恢复完整 ICU：apt 追加 `libicu72` 并删除该环境变量。
 - `.dockerignore` 排除运行时 RSA 私钥、私有配置（含 `/configs/appsettings.json`）、本地前端构建及测试产物。镜像内 `appsettings.json` 含控制台日志与无页面入口参数（均有默认值）；运行时私钥与 `configs/appsettings.json` 均在首次启动生成。
+- `ENTRYPOINT ["./SData"]`（自包含 apphost，不再 `dotnet SData.dll`）；VOLUME/EXPOSE/前端内嵌方式与配置快照逻辑均不变。
 - 不修改或删除本机私钥；公开仓库使用独立初始提交，不导入旧历史。完整旧历史保留于 Gitea 备份分支，历史密钥仍应按已暴露处理并轮换。
 
 ## 配置与持久化目录

@@ -20,15 +20,33 @@ WORKDIR /src
 # RepoRoot 由 .gitignore 位置推导，必须一并复制
 COPY .gitignore Directory.Build.props Directory.Packages.props SData.slnx ./
 COPY src/ src/
-# 指定 RID：只带 linux-x64 的 DuckDB 原生绑定（全平台绑定约 350MB → 50MB）
-RUN dotnet publish src/SData/SData.csproj -c Release -r linux-x64 --self-contained false -o /app/publish --nologo
+# 自包含单文件发布（与 CI Release 同参数）：运行层不再依赖 aspnet 共享运行时。
+# IncludeNativeLibrariesForSelfExtract=false → 原生库（libduckdb 等）松散随 apphost 放置，
+# 与旧框架依赖发布同布局，启动零自解压开销；PublishTrimmed/PublishReadyToRun 必须保持关闭
+# （Maomi 模块反射与 MCP 的 System.Text.Json 反射不兼容裁剪，R2R 只增体积）。
+RUN dotnet publish src/SData/SData.csproj -c Release -r linux-x64 --self-contained true \
+    -p:UseAppHost=true -p:PublishSingleFile=true \
+    -p:IncludeNativeLibrariesForSelfExtract=false \
+    -p:EnableCompressionInSingleFile=true \
+    -p:PublishReadyToRun=false -p:PublishTrimmed=false \
+    -p:DebugType=None -p:DebugSymbols=false \
+    -o /app/publish --nologo
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+# 运行层用基础 Linux（glibc 系，musl/Alpine 不支持——DuckDB 等原生库仅出 glibc 绑定），
+# 自带运行依赖：TLS 证书（S3 https 端点）、zlib/libstdc++（DuckDB/Kafka 原生库）、时区数据、
+# wget（docker-compose healthcheck 使用）。
+FROM debian:bookworm-slim AS final
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 zlib1g libstdc++6 tzdata wget \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=backend-build /app/publish ./
 COPY --from=ui-build /src/ui/dist-output ./wwwroot
 # 默认参数内置于 appsettings.json；首次启动复制为 /app/configs/appsettings.json 供覆盖，/app/configs 另存运行时生成的 RSA 私钥
-ENV ASPNETCORE_ENVIRONMENT=Production
+ENV ASPNETCORE_ENVIRONMENT=Production \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+# 全球化运行于 invariant 模式（免装 libicu，约省 40MB）：业务代码全部 InvariantCulture、无时区查询用法；
+# 如需恢复完整 ICU 全球化：上方 apt 追加 libicu72 并删除该环境变量。
 EXPOSE 5300
 VOLUME ["/app/data", "/app/configs"]
-ENTRYPOINT ["dotnet", "SData.dll"]
+ENTRYPOINT ["./SData"]

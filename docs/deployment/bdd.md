@@ -34,6 +34,18 @@ Feature: 版本镜像发布
     When 从源码构建发布镜像
     Then 镜像包含前端和浏览器探针且不包含本地私钥或私有配置
 
+  @DEP-S16 @manual
+  Scenario: 镜像推送前冒烟门禁与体积可见
+    Given 发布流水线构建的镜像已载入构建机本地（暂不推送）
+    When 容器启动后 60 秒内 /health 就绪
+    Then 冒烟通过才逐标签推送 Docker Hub；镜像体积与 manifest digest 记录到发布 Summary，冒烟失败禁止推送
+
+  @DEP-S17 @manual
+  Scenario: 非发布变更持续验证镜像
+    Given 推送 main 分支或提交 PR（纯文档变更跳过）
+    When docker-verify 工作流构建 Dockerfile（不推送）并运行容器
+    Then 冒烟 /health 通过且镜像体积写入构建 Summary；GHA 缓存 scope 与发布流水线共用，发布 tag 构建直接命中热缓存
+
   @DEP-S6 @manual
   Scenario: 五个平台的独立程序发布
     Given 推送了合法版本标记

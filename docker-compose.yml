@@ -1,6 +1,8 @@
 version: "3.8"
 
-# SData 内网单机部署：单容器（前端内嵌 wwwroot 同源托管），SQLite + DuckDB 数据落 /app/data 卷
+# SData 内网单机部署：单容器（前端内嵌 wwwroot 同源托管），SQLite + DuckDB 数据落 /app/data 卷。
+# 运行层为 debian:bookworm-slim + 自包含单文件产物（wget 已内置供 healthcheck 使用），
+# 全球化运行于 invariant 模式（DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1，镜像内无 libicu）。
 services:
   sdata:
     build: .

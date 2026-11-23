@@ -16,6 +16,7 @@
 - Actions 的 `release` 中 Docker job 成功后，在 Summary 查看版本、SHA 标签和 digest。只有稳定版更新 latest。
 - 拉取 `<namespace>/sdata:<version>`；覆盖仓库变量时同步替换镜像名。生产建议固定版本或 digest。
 - 目前只支持 `linux/amd64`，不要在 ARM64 机器上当作原生镜像使用。
+- 运行层为 `debian:bookworm-slim` + 自包含单文件产物（不再依赖 aspnet 共享运行时），`ENTRYPOINT ["./SData"]`；healthcheck 所用 `wget` 已内置于镜像。全球化运行于 invariant 模式（镜像内无 libicu，行为与旧镜像容器内一致——业务代码全部 InvariantCulture）；如需完整 ICU，改镜像 apt 追加 `libicu72` 并删除 `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT` 环境变量（见 [sdd](sdd.md#镜像边界)）。
 
 ## Docker 运行
 
@@ -54,5 +55,6 @@
 - 登录成功但推送失败：核对仓库名、组织权限和 Access Token 写权限。
 - 安装依赖失败：本地用 pnpm 10 更新并提交 lockfile，不移除 `--frozen-lockfile`。
 - 构建失败：检查类型检查、Node 与 .NET 构建日志；本地 Docker 验证用 `docker build -t sdata:verify .`。
+- 镜像持续验证：推送 main / 提交 PR 由 `docker-verify` 工作流自动构建并冒烟（容器 `/health`，60 秒未就绪判失败，镜像体积写入 Summary）；发布 job 在推送 Docker Hub 前会再次本地冒烟——冒烟失败时镜像不会上线，先看 job 日志里的容器日志尾部（`sdata-smoke.log`），修复后重跑即可。
 - 发布后使用隔离数据/配置目录验收 `/health`、主界面与 `/rum/probe.js`，确认私钥在首次启动时生成；不挂载生产数据试跑。
 - 同时发布多个 tag 不保证执行顺序；如 latest 指向旧版，在对应稳定 tag 的工作流页重新运行，不强推版本 tag。

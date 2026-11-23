@@ -36,9 +36,10 @@
 4. 全文检索 = 原文子串匹配（`body LIKE '%输入%'`，EscapeLike 转义 `%_\`，所见即所搜、中文免分词）；不做 ES 式行级倒排（基准实测 100 万行 7ms / 1000 万行 41ms，热层已近内存带宽极限），向 ES 靠齐走渐进路线：天级词项索引 → 分片级索引 → 查询语法子集 → BM25（超大规模场景指向 OpenObserve 等专业系统，单机内网不做行级倒排）。
 5. 日志冷层对象带词项索引 sidecar（token + CJK 二元组存在性索引）：归档时构建、本地镜像常驻（`data/cold-idx/`，365 天仅数百 MB），关键词查询先扫本地索引裁候选分片再拉对象——索引是超集过滤，对象内 LIKE 精确匹配，语义不变。
 6. 归档 `ORDER BY 主过滤键, ts` 写 parquet：`service/trace_id/name/device_key` 等值过滤经 zonemap 剪 row group，冷查询省带宽。
-7. 冷查询路径 = 台账驱动逐分片精确路径（缓存命中本地 / S3 直读+后台预热 / 本地冷存直读），域级通配仅台账为空时兜底且输出前经 glob() 验存——零命中/验存异常 fail-open 跳过冷层分支（read_parquet 对零命中通配在 prepare 阶段抛 IO Error 会连累本地天表查询整体 500，空桶场景必现）；验存探测按「配置指纹+域」缓存结果并熔断（命中 60s / 零命中 30s / 异常 5min），窗口内不再触碰 S3——探测在查询请求路径上，S3 故障时每个窗口每域最多付一次探测延迟，不逐查询拖慢搜索；`IObjectStore` 抽象统一本地与 S3 删除/下载通道。
+7. 冷查询路径 = 台账驱动逐分片精确路径（缓存命中本地 / S3 直读+后台预热 / 本地冷存直读），域级通配仅台账为空时兜底且输出前经 glob() 验存——零命中/验存异常 fail-open 跳过冷层分支（read_parquet 对零命中通配在 prepare 阶段抛 IO Error 会连累本地天表查询整体 500，空桶场景必现）；验存探测按「配置指纹+域」缓存结果并熔断（命中 60s / 零命中 30s / 异常 5min），窗口内不再触碰 S3——探测在查询请求路径上，S3 故障时每个窗口每域最多付一次探测延迟，不逐查询拖慢搜索；`IObjectStore` 抽象统一本地与 S3 删除/下载通道；双写并存分片（本地+S3 两行台账）本地优先去重收录。
 8. 归档分片粒度管理员可选（`S3.ArchiveGranularity`：day 默认 / hour）：hour 每个非空小时一个对象（仅日志生成对应正文索引），冷查询只拉命中分片；粒度同时作用于对象与索引（二者必须匹配），台账按冻结批次追加，重启恢复不重复发布。
 9. S3 SECRET 统一由 `S3SecretBuilder` 组装（启动 SECRET 与连接测试共用）：ENDPOINT 归一化为裸 host[:port]（DuckDB httpfs 不接受协议头，带 `http(s)://` 会拼出 `http://{bucket}.http//host...` → Could not resolve hostname）、`USE_SSL` 按协议头推导（无前缀按 http）、`URL_STYLE 'path'`（MinIO 等 IP 端点虚主机寻址永远无法解析，与 `S3ObjectStore` 的 `ForcePathStyle=true` 一致）。SECRET 是 DuckDB 连接实例内存态，重启即失：`StoreInitializer.StartAsync` 以 `GetS3()`（SQLite 覆盖 &gt; 文件回退）为真相源 `CREATE OR REPLACE` 重建，并同步合并值回 `SystemOptions.S3`（`S3ObjectStore`/`ColdCacheService` 同源生效）；缺此步骤时查询拼出 `s3://` URL 而无匹配 SECRET，httpfs 走默认 AWS 端点（`in region ''` + NoSuchBucket）。
+10. 冷备双写并存（本地磁盘冷备）：分片目的地恒含本地键 `data/cold/{domain}/{day[_HH]}.parquet`（与 S3 桶内 `{prefix}/{domain}/...` 结构同构），配置 S3 时每分片追加 `s3://` 键（`BuildShardPlan` 纯函数）；写入顺序本地先、S3 后，逐目的地 `COPY` + 行数校验，每个目的地各落一行台账（同 ShardName，行数一致）；任一目的地失败整轮失败不落台账（全有或全无，冻结表保留下轮覆盖半写重试）——本地磁盘因此成为归档的硬性目的地（磁盘满会阻塞归档批次）。查询侧按 ShardName 去重、本地优先收录，S3 副本跳过（防重复扫描出重复行），S3-only 历史分片仍走缓存/直读；清理经 `IObjectStore` 按对象键逐行路由介质，双写天然对称。
 
 - 自动归档以 UTC 零点为日期基准，天表日期 ≤ 当天减 HotDays 即到期（HotDays>0 且 ColdDays>0）；一天策略归档昨天但不归档今天。S3 URI 不执行本地目录创建，仍按写对象→回读行数校验→索引→台账→DROP 顺序执行。
 

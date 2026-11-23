@@ -50,4 +50,4 @@ SData 是面向内网单机部署的高性能观测/数据分析服务：**DuckD
 
 - `tool/SchemaSync`：`script`（导出 SQLite 建库脚本）/ `apply`（增量修补）/ `duck`（应用 DuckDB 内嵌 DDL）。
 - `tool/I18nScanner`：扫描 BusinessException 消息生成 i18n 资源（`--src --out --dry-run --report`）。
-- 部署：单容器（宿主内嵌前端静态资源，同源），见 `deploy/`、`Dockerfile`。
+- 部署：单容器（宿主内嵌前端静态资源，同源；运行层 debian:bookworm-slim + 自包含单文件产物），见 `Dockerfile`、`docker-compose.yml`。

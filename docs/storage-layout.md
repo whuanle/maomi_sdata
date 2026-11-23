@@ -68,7 +68,8 @@ HTTP ingest ──→ IIngestBuffer（有界 Channel，满则丢弃计数）
 热层  DuckDB 天表 logs_/traces_/metrics_/iot_{yyyyMMdd}
         │ 超过 HotDays（ArchiveService，ORDER BY 主过滤键,ts）
         ▼
-冷层  data/cold/{domain}/{shard}.parquet          ← 本地冷存（或 s3://{bucket}/{prefix}/{domain}/{shard}.parquet）
+冷层  data/cold/{domain}/{shard}.parquet          ← 本地冷存（恒有副本；双写并存时与 S3 桶内结构同构）
+      s3://{bucket}/{prefix}/{domain}/{shard}.parquet ← S3 冗余副本（配置 S3 后与本地并存；台账逐行路由介质）
       data/cold-idx/{domain}/{shard}.idx.parquet  ← 词项索引本地镜像（归档时构建，查询零网络；S3 同步一份备份）
       data/cache/cold/{domain}/{shard}.parquet    ← S3 对象本地缓存（ColdCacheService LRU 预热）
 台账  SQLite ColdArchives（domain, day, objectKey, rowCount；一对象一行，day 为过期桶）

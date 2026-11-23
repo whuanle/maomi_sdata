@@ -250,15 +250,15 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 构建并推送
-        id: build
+      - name: 构建镜像（载入本地，暂不推送）
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
           # Dockerfile 的 DuckDB 发布 RID 固定为 linux-x64，不提供伪多架构镜像。
           platforms: linux/amd64
-          push: true
+          push: false
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
             org.opencontainers.image.title=SData
@@ -270,15 +270,55 @@ jobs:
           provenance: false
           sbom: false
 
+      - name: 容器冒烟验证（/health，通过才允许推送）
+        run: |
+          set -euo pipefail
+          VERSION_TAG="${IMAGE_NAMESPACE}/${IMAGE_REPO}:${RELEASE_VERSION%%+*}"
+          docker run -d --name sdata-smoke -p 5300:5300 "$VERSION_TAG"
+          HEALTH=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:5300/health >/dev/null 2>&1; then HEALTH=1; break; fi
+            sleep 2
+          done
+          docker logs sdata-smoke > sdata-smoke.log 2>&1 || true
+          if [ "$HEALTH" != 1 ]; then
+            echo '::error::容器 60 秒内 /health 未就绪，禁止推送'
+            tail -60 sdata-smoke.log
+            exit 1
+          fi
+          echo "冒烟通过：/health 200"
+          docker rm -f sdata-smoke >/dev/null
+          BYTES=$(docker image inspect "$VERSION_TAG" --format '{{.Size}}')
+          echo "IMAGE_MB=$(( BYTES / 1024 / 1024 ))" >> "$GITHUB_ENV"
+
+      - name: 推送 Docker Hub
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done <<< "$IMAGE_TAGS"
+
+      - name: 解析镜像 digest
+        id: digest
+        run: |
+          set -euo pipefail
+          VERSION_TAG="${IMAGE_NAMESPACE}/${IMAGE_REPO}:${RELEASE_VERSION%%+*}"
+          DIGEST="$(docker buildx imagetools inspect "$VERSION_TAG" --format '{{.Manifest.Digest}}')"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
       - name: 发布结果
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+          IMAGE_MB: ${{ env.IMAGE_MB }}
         run: |
           set -euo pipefail
           {
             echo '### SData Docker Hub 发布成功'
-            echo '- 平台：`linux/amd64`'
+            echo '- 平台：`linux/amd64`（debian-slim + 自包含单文件产物）'
+            echo "- 镜像体积：约 ${IMAGE_MB} MB"
             while IFS= read -r tag; do
               printf -- '- `%s`\n' "$tag"
             done <<< "$IMAGE_TAGS"

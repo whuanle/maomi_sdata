@@ -1135,7 +1135,7 @@
     "s3SecretKeepHint": "Secret configured: leave empty or keep the mask to reuse the stored value",
     "s3Test": "Test Connection",
     "testSuccess": "Connected, test object written",
-    "s3Hint": "Changes apply after saving. With S3 enabled, archives go to the bucket; without S3, archives can still use local data/cold/. A successful connection test does not prove business data has been archived.",
+    "s3Hint": "Changes apply after saving. Dual-write: archives always keep a local copy under data/cold/ (mirroring the bucket layout; queries prefer local); with S3 enabled, every shard is also written to the bucket; without S3, local only. A full local disk blocks archiving. A successful connection test does not prove business data has been archived.",
     "retention": "Data Retention",
     "sessionsRetention": "Sessions (pageviews / events / replay)",
     "archiveHint": "Set local days before moving each data type to S3. With 1 day, yesterday and older complete UTC day tables are archived after UTC midnight. Scans run every 10 minutes; hot tables are removed after upload and validation. Local days=0 uses legacy settings, not immediate archiving. Manage cold days in Data Retention; types with cold days=0 are not archived.",

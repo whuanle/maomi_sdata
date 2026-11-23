@@ -18,4 +18,5 @@
 | @DEP-S11 / @DEP-S12 / @DEP-S14 | `tests/SData.Ingest.Tests/ConfigsAppSettingsTests.cs`（xUnit，`dotnet test tests/SData.Ingest.Tests --filter ConfigsAppSettingsTests`）：目录不存在或为空时复制；已有覆盖配置不覆盖；默认配置缺失时不建目录 | 通过（2026-11-21，4/4；S11 对应 2 例、S12 对应 1 例、S14 对应 1 例） |
 | @DEP-S11 | `tool/Release/smoke.py`：win-x64 单文件发布→`package.py`→smoke，首次启动后断言 `configs/appsettings.json` 与包内 `appsettings.json` 逐字节一致 | 通过（2026-11-21）；Linux/macOS 包未验证 |
 | @DEP-S13 | 本机无 Docker：以容器同款布局运行发布构建（内容根为程序目录，空 `configs/`、`data/` 作为挂载点）。验证首次启动复制；覆盖配置改端口为 61234 后重启，服务监听 61234、默认 5300 未监听、覆盖文件保持不变；configs 无写权限时启动即抛出 `UnauthorizedAccessException` 并指出该文件 | 手工通过（2026-11-21）；真实镜像构建、容器内运行用户与 Linux 挂载权限未验证 |
+| @DEP-S16 / @DEP-S17 | `.github/workflows/docker-verify.yml`（push main/PR：构建 Dockerfile 不推送 + 容器 /health 冒烟 + 镜像体积 Summary）；发布 `build-and-push` 改为「构建载入本地 → 冒烟 → 逐标签 docker push → imagetools 解析 digest → Summary 记录体积/digest」的推送前门禁 | 工作流与门禁已提交（2026-11-22，YAML 解析与步骤语法校验通过）；首次 CI 实跑待确认——本机无 Docker，镜像结构与发布参数已于 win-x64 本地实测 |
 | 发布前回归 | 前端 typecheck、vitest；MQ Producer 构建；S3 与 IoT 定向测试；工作流 YAML 与 Bash | 通过（2026-11-20，前端 748/748、S3 13/13、IoT 47/47，MQ 工具构建成功） |

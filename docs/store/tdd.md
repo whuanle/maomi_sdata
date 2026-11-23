@@ -37,6 +37,9 @@
 | @STORE-COLD6 | `TableResolverTests.Resolve_ProbeBroken_CircuitSkipsRepeatProbesWithinWindow` | 通过（2026-11-17；验存探测按窗口缓存 + 异常熔断，修复 S3 故障时逐查询付探测延迟导致搜索页极慢） |
 | @STORE-COLD5 | `StoreInitializerTests.Start_PersistedS3Override_RebuildsRuntimeSecret` + `Start_NoS3_NoSecretCreated` | 通过（2026-11-17；修复设置页 S3 配置重启后 DuckDB SECRET 丢失 → 查询走默认 AWS 端点报 NoSuchBucket） |
 | @STORE-ARCH6 | 同 @STORE-COLD-E2E（MinIO 集成窗） | e2e 待集成窗（T518） |
+| @STORE-ARCH12/14 | `ArchiveTests.Archive_ShardPlan_LocalAlwaysS3WhenConfigured`、`Archive_UsesRuntimeS3OverrideForObjectKeys`、`Archive_DualWrite_S3Failure_FailsWholeBatch` | 通过（2026-11-22，冷备双写并存：分片计划纯函数、运行时双目的地覆盖、S3 不可达时全有或全无失败语义与本地先行落盘） |
+| @STORE-ARCH13 | 同 @STORE-COLD-E2E（MinIO 集成窗） | e2e 待集成窗（真实 S3 双写一致性；本地侧行为已由 ARCH12/14 覆盖） |
+| @STORE-COLD7 | `TableResolverTests.Resolve_DualWriteShard_PrefersLocalOverS3`、`Resolve_S3OnlyShard_StillResolvesS3Path` | 通过（2026-11-22，双写分片本地优先去重防重复扫描 + S3-only 历史分片兼容） |
 | @STORE-MQ5 | `MqRetryNotificationTests.QueueCooldownSurvivesWorkerRestartAndStageChanges`、`NotificationSchemaTests` | 冷却持久化/阶段去重/失败预算/渠道停用及旧库补表通过（2026-11-20）；无真实通知外发 |
 | @STORE-MQ4 | `MqPersistenceTests`（旧表重复补列、诊断往返、writer 安全故障与恢复） | 通过（2026-11-19，消费存储专项 5/5） |
 | @STORE-MQ3 | `MqPersistenceTests.ConsumptionSamplesRoundTripAcrossDaysWithBoundParameters` | 通过（2026-11-19，消费存储专项 4/4）；本次未执行真实 broker 故障注入 |
