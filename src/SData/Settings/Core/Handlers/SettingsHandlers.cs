@@ -18,21 +18,18 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
 {
     private readonly ISystemSettingsProvider _settingsProvider;
     private readonly SystemOptions _systemOptions;
-    private readonly IDuckDbRuntimeSettings _duckDb;
     private readonly IConfiguration _configuration;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="QuerySettingsCommandHandler"/> class.
     /// </summary>
     /// <param name="settingsProvider">系统设置.</param>
-    /// <param name="systemOptions">文件配置（摄取缓冲等只读快照）.</param>
-    /// <param name="duckDb">DuckDB 运行参数快照.</param>
+    /// <param name="systemOptions">文件配置（摄取鉴权等只读快照）.</param>
     /// <param name="configuration">配置（MQTT 端口等零散键）.</param>
-    public QuerySettingsCommandHandler(ISystemSettingsProvider settingsProvider, SystemOptions systemOptions, IDuckDbRuntimeSettings duckDb, IConfiguration configuration)
+    public QuerySettingsCommandHandler(ISystemSettingsProvider settingsProvider, SystemOptions systemOptions, IConfiguration configuration)
     {
         _settingsProvider = settingsProvider;
         _systemOptions = systemOptions;
-        _duckDb = duckDb;
         _configuration = configuration;
     }
 
@@ -51,11 +48,6 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
                 SecretKey = string.IsNullOrWhiteSpace(s3.SecretKey) ? string.Empty : S3SettingsModel.SecretMask,
                 HasSecret = !string.IsNullOrWhiteSpace(s3.SecretKey),
             },
-            DuckDb = new DuckDbSettingsResponse
-            {
-                MemoryLimit = _settingsProvider.GetDuckDb().MemoryLimit,
-                EffectiveMemoryLimit = _duckDb.EffectiveMemoryLimit,
-            },
             Retention = _settingsProvider.GetRetention(),
             Compression = _settingsProvider.GetCompression(),
             Otlp = OtlpHeaders.Redact(_settingsProvider.GetOtlp()),
@@ -63,8 +55,6 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
             Ingest = new IngestSettingsInfo
             {
                 RequireAuth = _systemOptions.Ingest.RequireAuth,
-                BufferCapacity = _systemOptions.Ingest.BufferCapacity,
-                BufferByteBudgetBytes = _systemOptions.Ingest.BufferByteBudgetBytes,
             },
             Startup = BuildStartupSnapshot(),
         };
@@ -88,24 +78,10 @@ public class QuerySettingsCommandHandler : IRequestHandler<QuerySettingsCommand,
             WebUI = _systemOptions.WebUI,
             DatabasePath = _systemOptions.Database.Path,
             DuckDbPath = _systemOptions.DuckDb.Path,
-            DuckDbMemoryLimit = _systemOptions.DuckDb.MemoryLimit,
-            DuckDbCheckpointThreshold = _systemOptions.DuckDb.CheckpointThreshold,
-            DuckDbQueryCacheTtlSeconds = _systemOptions.DuckDb.QueryCacheTtlSeconds,
-            DuckDbQueryCacheMaxEntries = _systemOptions.DuckDb.QueryCacheMaxEntries,
             DuckDbTempDirectory = _systemOptions.DuckDb.TempDirectory,
             IngestRequireAuth = _systemOptions.Ingest.RequireAuth,
-            IngestBufferCapacity = _systemOptions.Ingest.BufferCapacity,
-            IngestBufferByteBudgetBytes = _systemOptions.Ingest.BufferByteBudgetBytes,
         };
     }
-}
-
-/// <summary>保存 DuckDB 内存限制处理.</summary>
-public class SaveDuckDbSettingsCommandHandler(DuckDbSettingsService service) : IRequestHandler<SaveDuckDbSettingsCommand, DuckDbSettingsResponse>
-{
-    /// <inheritdoc/>
-    public async ValueTask<DuckDbSettingsResponse> Handle(SaveDuckDbSettingsCommand request, CancellationToken cancellationToken)
-        => await service.SaveAsync(request.MemoryLimit, cancellationToken);
 }
 
 /// <summary>

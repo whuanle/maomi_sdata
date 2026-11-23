@@ -13,8 +13,8 @@ using SData.Store.Models;
 
 namespace SData.Alerts;
 
-/// <summary>串行、公平轮转；只评估最新完整窗口，不补跑积压窗口（告警开关与待投递上限取运行参数，每轮读取）.</summary>
-public class AlertScheduler(IServiceScopeFactory scopes, AlertExecutionGate gate, ISystemSettingsProvider settings, TimeProvider clock, ILogger<AlertScheduler> logger) : BackgroundService
+/// <summary>串行、公平轮转；只评估最新完整窗口，不补跑积压窗口（告警开关取运行参数，待投递上限取自动调参）.</summary>
+public class AlertScheduler(IServiceScopeFactory scopes, AlertExecutionGate gate, ISystemSettingsProvider settings, ITuningState tuning, TimeProvider clock, ILogger<AlertScheduler> logger) : BackgroundService
 {
     private long _cursor;
     private long _nextCleanup;
@@ -84,7 +84,7 @@ public class AlertScheduler(IServiceScopeFactory scopes, AlertExecutionGate gate
             {
                 var channels = JsonSerializer.Deserialize<List<string>>(rule.Channels) ?? new();
                 var pending = await db.AlertDeliveries.CountAsync(x => x.Status == "pending", token);
-                if (pending + channels.Count > Math.Clamp(settings.GetRuntime().Alerts.MaxPendingDeliveries, 1, 10000))
+                if (pending + channels.Count > Math.Clamp(tuning.AlertMaxPendingDeliveries, 1, 10000))
                 {
                     // 不丢失状态转换通知；下一完整窗口重试该转换。
                     rule.Firing = previousFiring;

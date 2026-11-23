@@ -665,6 +665,29 @@ export interface StatusResponse {
   tableCounts: Record<string, number>;
   todayRows: Record<string, number>;
   duckDbMemoryLimit: string;
+  /** 自动调参当前生效值与最近调整（缓冲扩缩、DuckDB 基线等；旧后端缺失时为 null）. */
+  tuning: TuningSnapshot | null;
+}
+
+/** 自动调参快照（性能参数由系统按环境/负载自动调控，只读展示）. */
+export interface TuningSnapshot {
+  effectiveCores: number;
+  memoryLimitBytes: number;
+  duckDbMemoryLimit: string;
+  duckDbThreads: number;
+  duckDbMaxConcurrentQueries: number;
+  bufferCapacity: number;
+  bufferByteBudgetBytes: number;
+  bufferByteBudgetCeilingBytes: number;
+  bufferCapacityBaseline: number;
+  bufferByteBudgetBaselineBytes: number;
+  batchSize: number;
+  flushIntervalMs: number;
+  agentsGlobalConcurrency: number;
+  coldCacheMaxBytes: number;
+  lastAdjustAt?: string | null;
+  lastAdjustReason?: string | null;
+  adjustCount: number;
 }
 
 /** 接入通道健康项（总览页）. */
@@ -903,15 +926,12 @@ export interface SaveOtlpSettings extends OtlpSettings {
   clearMetricsHeaders?: boolean;
 }
 
-/** 摄取缓冲参数（启动时绑定，只读展示）. */
+/** 摄取启动参数（只读展示；缓冲容量/预算由系统自动调控，见监控页 Tuning）. */
 export interface IngestSettings {
   requireAuth: boolean;
-  bufferCapacity: number;
-  batchSize: number;
-  flushIntervalMs: number;
 }
 
-/** 启动参数快照（只读；可在 configs/system.json 覆盖，重启生效）. */
+/** 启动参数快照（只读；可在 configs/system.json 覆盖，重启生效；性能参数由系统自动调控不在此列）. */
 export interface StartupSettings {
   systemJsonExists: boolean;
   port: number;
@@ -919,26 +939,12 @@ export interface StartupSettings {
   webUi: boolean;
   databasePath: string;
   duckDbPath: string;
-  duckDbMemoryLimit: string;
-  duckDbCheckpointThreshold: string;
-  duckDbQueryCacheTtlSeconds: number;
-  duckDbQueryCacheMaxEntries: number;
   duckDbTempDirectory?: string | null;
   ingestRequireAuth: boolean;
-  ingestBufferCapacity: number;
-  ingestBufferByteBudgetBytes: number;
-}
-
-/** DuckDB 内存设置（保存后立即生效）. */
-export interface DuckDbSettings {
-  memoryLimit: string;
-  effectiveMemoryLimit: string;
 }
 
 /** 系统设置响应（GET /settings，管理员）. */
 export interface SettingsResponse {
-  /** 旧版后端尚未提供该字段；缺失时禁用内存配置入口. */
-  duckDb?: DuckDbSettings | null;
   s3: S3Settings;
   retention: RetentionSettings;
   compression: CompressionSettings;

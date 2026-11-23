@@ -38,6 +38,14 @@ const status = {
   gcHeapBytes: 512, threadCount: 4, os: 'test-os',
   buffer: { buffered: { log: 9, trace: 9 }, processed: { log: 9 }, dropped: { log: 0 } },
   tableCounts: {}, todayRows: { logs: 42 }, duckDbMemoryLimit: '512MB',
+  tuning: {
+    effectiveCores: 4, memoryLimitBytes: 2 * 1024 * 1024 * 1024, duckDbMemoryLimit: '1GB',
+    duckDbThreads: 4, duckDbMaxConcurrentQueries: 2, bufferCapacity: 100000,
+    bufferByteBudgetBytes: 200 * 1024 * 1024, bufferByteBudgetCeilingBytes: 600 * 1024 * 1024,
+    bufferCapacityBaseline: 100000, bufferByteBudgetBaselineBytes: 200 * 1024 * 1024,
+    batchSize: 20000, flushIntervalMs: 300, agentsGlobalConcurrency: 4,
+    coldCacheMaxBytes: 512 * 1024 * 1024, lastAdjustAt: null, lastAdjustReason: null, adjustCount: 0,
+  },
 };
 
 describe('OverviewPage', () => {

@@ -16,7 +16,8 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
     private readonly IStoreInfo _storeInfo;
     private readonly SystemOptions _systemOptions;
     private readonly ResourceSampler _resources;
-    private readonly IDuckDbRuntimeSettings _duckDb;
+    private readonly DuckDbConnectionManager _duckDb;
+    private readonly ITuningState _tuning;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="QueryStatusCommandHandler"/> class.
@@ -24,13 +25,15 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
     /// <param name="buffer">接入缓冲.</param>
     /// <param name="storeInfo">存储信息.</param>
     /// <param name="systemOptions">系统配置.</param>
-    public QueryStatusCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ResourceSampler resources, IDuckDbRuntimeSettings duckDb)
+    /// <param name="tuning">自动调参状态.</param>
+    public QueryStatusCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ResourceSampler resources, DuckDbConnectionManager duckDb, ITuningState tuning)
     {
         _buffer = buffer;
         _storeInfo = storeInfo;
         _systemOptions = systemOptions;
         _resources = resources;
         _duckDb = duckDb;
+        _tuning = tuning;
     }
 
     /// <inheritdoc/>
@@ -50,6 +53,7 @@ public class QueryStatusCommandHandler : IRequestHandler<QueryStatusCommand, Sta
             Os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
             Buffer = _buffer.GetStats(),
             DuckDbMemoryLimit = _duckDb.EffectiveMemoryLimit,
+            Tuning = _tuning.Snapshot,
         };
 
         var today = DateTimeOffset.UtcNow;

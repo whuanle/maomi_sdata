@@ -29,14 +29,15 @@ public class StoreCoreModule : IModule
     public void ConfigureServices(ServiceContext context)
     {
         context.Services.AddSingleton<DuckDbConnectionManager>();
-        context.Services.AddSingleton<IDuckDbRuntimeSettings>(sp => sp.GetRequiredService<DuckDbConnectionManager>());
+        context.Services.AddSingleton<ITuningState, TuningState>();
         context.Services.AddSingleton<DuckDbSchemaBootstrapper>();
+        context.Services.AddSingleton<ResourceInterner>();
         context.Services.AddSingleton<IngestBuffer>();
         context.Services.AddSingleton<SData.Store.IIngestBuffer>(sp => sp.GetRequiredService<IngestBuffer>());
         context.Services.AddSingleton<AnalyticsExecutor>();
-        // 分析查询执行器包装短 TTL 结果缓存装饰器（AnalyticsQueryCacheTtlSeconds=0 时直通；告警计数直通）
+        // 分析查询执行器包装短 TTL 结果缓存装饰器（TTL/条目为压测择优常量；告警计数直通）
         context.Services.AddSingleton<SData.Store.IAnalyticsExecutor>(sp =>
-            new CachedAnalyticsExecutor(sp.GetRequiredService<AnalyticsExecutor>(), sp.GetRequiredService<SystemOptions>()));
+            new CachedAnalyticsExecutor(sp.GetRequiredService<AnalyticsExecutor>()));
         context.Services.AddSingleton<IAnalyticsCatalog, AnalyticsCatalog>();
         context.Services.AddSingleton<SData.Store.IStoreInfo>(sp => sp.GetRequiredService<DuckDbConnectionManager>());
         context.Services.AddSingleton<SData.Store.IStorePerformanceMetrics>(sp => sp.GetRequiredService<DuckDbConnectionManager>());
@@ -55,11 +56,12 @@ public class StoreCoreModule : IModule
         context.Services.AddHostedService(sp => sp.GetRequiredService<ColdCacheService>());
         context.Services.AddSingleton<SData.Store.QueryDsl.ITableResolver, TableResolver>();
         context.Services.AddSingleton<QueryDslExecutorService>();
-        // 查询执行器包装短 TTL 结果缓存装饰器（QueryCacheTtlSeconds=0 时直通）
+        // 查询执行器包装短 TTL 结果缓存装饰器（TTL/条目为压测择优常量）
         context.Services.AddSingleton<SData.Store.QueryDsl.IQueryDslExecutor>(sp =>
-            new CachedQueryDslExecutor(sp.GetRequiredService<QueryDslExecutorService>(), sp.GetRequiredService<SystemOptions>()));
+            new CachedQueryDslExecutor(sp.GetRequiredService<QueryDslExecutorService>()));
         context.Services.AddHostedService<StoreInitializer>();
         context.Services.AddHostedService<IngestWriterService>();
+        context.Services.AddHostedService<AdaptiveTuningService>();
         context.Services.AddHostedService<RetentionService>();
         context.Services.AddHostedService<RollupService>();
         context.Services.AddHostedService<ArchiveService>();
@@ -70,12 +72,13 @@ public class StoreCoreModule : IModule
 }
 
 /// <summary>
-/// 存储初始化：DuckDB 打开 + Schema 引导 + 设置页持久化 S3 SECRET 重建.
+/// 存储初始化：DuckDB 打开（运行参数取 TuningState 自动调控基线）+ Schema 引导 + 设置页持久化 S3 SECRET 重建.
 /// </summary>
 public class StoreInitializer : IHostedService
 {
     private readonly DuckDbConnectionManager _connectionManager;
     private readonly DuckDbSchemaBootstrapper _bootstrapper;
+    private readonly ITuningState _tuning;
     private readonly SystemOptions _systemOptions;
     private readonly ISystemSettingsProvider _settingsProvider;
     private readonly IS3SecretManager _s3SecretManager;
@@ -85,13 +88,15 @@ public class StoreInitializer : IHostedService
     /// </summary>
     /// <param name="connectionManager">连接管理器.</param>
     /// <param name="bootstrapper">Schema 引导.</param>
+    /// <param name="tuning">自动调参状态.</param>
     /// <param name="systemOptions">系统配置（文件回退默认）.</param>
-    /// <param name="settingsProvider">运行时系统设置（SQLite 覆盖优先）.</param>
+    /// <param name="settingsProvider">运行时系统设置（S3 覆盖优先）.</param>
     /// <param name="s3SecretManager">S3 SECRET 管理.</param>
-    public StoreInitializer(DuckDbConnectionManager connectionManager, DuckDbSchemaBootstrapper bootstrapper, SystemOptions systemOptions, ISystemSettingsProvider settingsProvider, IS3SecretManager s3SecretManager)
+    public StoreInitializer(DuckDbConnectionManager connectionManager, DuckDbSchemaBootstrapper bootstrapper, ITuningState tuning, SystemOptions systemOptions, ISystemSettingsProvider settingsProvider, IS3SecretManager s3SecretManager)
     {
         _connectionManager = connectionManager;
         _bootstrapper = bootstrapper;
+        _tuning = tuning;
         _systemOptions = systemOptions;
         _settingsProvider = settingsProvider;
         _s3SecretManager = s3SecretManager;
@@ -100,8 +105,7 @@ public class StoreInitializer : IHostedService
     /// <inheritdoc/>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var runtime = _settingsProvider.GetRuntime().DuckDb;
-        await _connectionManager.InitializeAsync(cancellationToken, _settingsProvider.GetDuckDb().MemoryLimit, runtime.Threads, runtime.MaxConcurrentQueries);
+        await _connectionManager.InitializeAsync(cancellationToken, _tuning.DuckDbMemoryLimit, _tuning.DuckDbThreads, _tuning.DuckDbMaxConcurrentQueries);
         await _bootstrapper.ApplyAsync(cancellationToken);
 
         // 冷启动重建设置页持久化的 S3 SECRET：DuckDB SECRET 是连接实例内存态，重启即失，

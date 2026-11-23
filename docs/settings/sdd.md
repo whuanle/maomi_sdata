@@ -15,9 +15,10 @@
 - MQ 预览支持 raw/json/regex/csv/logfmt/otlp-json，最多50条，映射失败包含错误记录；syslog、otlp-proto、.NET 自定义时间格式明确501，正则采用 Go RE2 子集。S3连接测试只有配置真实 `Service.TestS3` 适配器后才执行，缺适配器明确501。通知自建目标需宿主传入 `AllowedOrigins`；默认仅允许内置公共渠道，不为兼容而关闭目标检查。
 - 历史JSON损坏、内存/压缩/运行参数非法时回退并记录固定设置键；认证损坏记录键后拒绝连接。日志不记录设置值或底层错误文本。`RuntimeOptions(ctx)`（保留`GetRuntime`别名）为告警预算独立读取`system:runtime`，不读取其它设置或查询DuckDB，元数据库读取失败显式返回error；`SendNotification(ctx,id,message)` 为投递提供真实结果，`Success=false`须转为投递失败，不能仅检查error。
 
-## DuckDB 内存
+## 性能参数自动调控（2026-11-23）
 
-- 管理员 `?tab=duckdb`，GET 合并视图含 `duckDb.memoryLimit/effectiveMemoryLimit`；PUT `/api/settings/duckdb` 仅接收 `memoryLimit`，保存 `system:duckdb`，不开放路径和线程。
+- DuckDB 内存/线程/查询并发、接入缓冲容量与字节预算、批量落库参数、MCP 并发、冷缓存容量等性能参数不再暴露给用户（`PUT /settings/duckdb` 端点与 `system:duckdb` 设置键已删除，残留行被忽略）。
+- 唯一真相源为 `ITuningState`（Store.Core）：启动时按 cgroup CPU 配额与容器/主机内存上限计算静态基线（DuckDB 内存=环境内存 50%、线程=有效核数、查询并发=核数一半、缓冲预算=环境内存 10% 等，默认值来自压测择优）；缓冲容量/预算/批量参数为动态值，由 `AdaptiveTuningService`（10s tick）按水位与资源余量扩缩，硬顶=环境内存 × 85% 防 OOM。
 - 前端兼容旧版后端缺失/null的 `duckDb`：显示更新并重启后端及重试提示，不初始化表单、不伪造默认容量，其他页签仍可使用；重试获取新契约后恢复表单。
 - 容量支持正数 MB/GB/MiB/GiB（最多六位小数，1字节至安全整数上限）；MB/GB 十进制、MiB/GiB 二进制，拒绝无限制和非法历史覆盖，后者回退文件值。
 - `DuckDbSettingsService` 单例串行协调：运行应用并读回 → SQLite 保存；失败恢复旧运行参数，恢复失败返回明确503并记录严重日志。Shared 的 `IDuckDbRuntimeSettings` 由连接管理器实现，写门内参数绑定 SET，不重建实例。启动在 Schema 引导前应用合并值；保留文件默认不变。
@@ -30,10 +31,10 @@
 
 ## 组件
 
-- **运行时设置通道** `SystemSettingsProvider`（Settings.Core，单例）：SQLite `setting` 表键值覆盖 + 文件 `SystemOptions` 回退（懒加载全表缓存，保存即刷新；脏 JSON/库不可用回退文件默认，不阻塞后台 tick）。键：`system:duckdb/s3/retention/compression/mq/otlp`（值 = 选项类型 JSON；`system:kafka/rabbitmq/pulsar` 为旧单实例键，仅作合成回退）。契约 `ISystemSettingsProvider` 在 Settings.Shared，供 Store/Ingest 跨域引用（跨域仅引 Shared，符合分层）。
+- **运行时设置通道** `SystemSettingsProvider`（Settings.Core，单例）：SQLite `setting` 表键值覆盖 + 文件 `SystemOptions` 回退（懒加载全表缓存，保存即刷新；脏 JSON/库不可用回退文件默认，不阻塞后台 tick）。键：`system:s3/retention/compression/mq/otlp/runtime`（`system:duckdb` 为历史遗留键，不再读取）（值 = 选项类型 JSON；`system:kafka/rabbitmq/pulsar` 为旧单实例键，仅作合成回退）。契约 `ISystemSettingsProvider` 在 Settings.Shared，供 Store/Ingest 跨域引用（跨域仅引 Shared，符合分层）。
 - **MQ 实例配置** `GetMqInstances()`（读取顺序）：设置键 `system:mq`（`List<MqInstanceOptions>`，多实例主存储）> 文件 `SData:Mq:Instances` 节 > 旧 `system:kafka/rabbitmq/pulsar` 三键**内存合成**（`kafka-default` 等固定 id 1/2/3，仅 Enabled 且连接+topic 齐备才合成）；首次保存 `system:mq` 即完成迁移，旧键此后不再读取。选项类型 `MqInstanceOptions/MqTopicOptions/MqParserOptions` 在 Infra.Configuration.Shared（避免 Infra→Settings 循环引用）。
-- **设置 API** `SettingsController`（`/api/settings`，类级 `[Authorize(Roles = SDataRoles.Admin)]`）：GET 合并视图（含 `startup` 启动参数快照：端口/DuckDB/缓冲等白名单字段 + `configs/system.json` 是否已创建；不含 InitialAdminPassword/InitialApiKey 等敏感项）；PUT `s3/retention/compression/otlp`；POST `s3/test`；GET/PUT `mq-instances`（实例列表，全量替换，保存时新实例补雪花 id）；POST `mq-instances/parse-preview`（样例试解析，不落库）。CQRS 命令 + `IModelValidator`（天数 0–36500、codec 白名单、MQ 类型/格式白名单、Name 唯一、启用即连接必填、regex 可编译、csv 分隔符单字符）。旧 `PUT /settings/mq`（三键逐键保存）已随多实例改造移除。
-- **启动参数覆盖** `configs/system.json`（`MainExtensions.AddConfigsOverride` 追加 JSON 配置源）：可调启动参数（端口、MQTT 端口、存储路径、DuckDB 资源、接入缓冲等）在 `{"SData": {…}}` 形状下覆盖代码默认值，重启生效；加载顺序 `appsettings.json < configs/appsettings.json < configs/system.json < 环境变量 < 命令行`。设置页「启动配置」页签（`?tab=startup`，`StartupConfigPanel`）只读展示：覆盖机制说明、模板 JSON（可复制）、system.json 创建状态与当前生效值；无写回接口，文件由部署者自行创建。
+- **设置 API** `SettingsController`（`/api/settings`，类级 `[Authorize(Roles = SDataRoles.Admin)]`）：GET 合并视图（含 `startup` 启动参数快照：端口/存储路径/接入鉴权等白名单字段 + `configs/system.json` 是否已创建；不含 InitialAdminPassword/InitialApiKey 等敏感项，不含性能参数）；PUT `s3/retention/compression/runtime/otlp`；POST `s3/test`；GET/PUT `mq-instances`（实例列表，全量替换，保存时新实例补雪花 id）；POST `mq-instances/parse-preview`（样例试解析，不落库）。CQRS 命令 + `IModelValidator`（天数 0–36500、codec 白名单、MQ 类型/格式白名单、Name 唯一、启用即连接必填、regex 可编译、csv 分隔符单字符）。旧 `PUT /settings/mq`（三键逐键保存）已随多实例改造移除。
+- **启动参数覆盖** `configs/system.json`（`MainExtensions.AddConfigsOverride` 追加 JSON 配置源）：可调启动参数（端口、MQTT 端口、存储路径、接入鉴权等功能/部署项；性能参数已收归自动调控，残留键被忽略）在 `{"SData": {…}}` 形状下覆盖代码默认值，重启生效；加载顺序 `appsettings.json < configs/appsettings.json < configs/system.json < 环境变量 < 命令行`。设置页「启动配置」页签（`?tab=startup`，`StartupConfigPanel`）只读展示：覆盖机制说明、模板 JSON（可复制）、system.json 创建状态与当前生效值；无写回接口，文件由部署者自行创建。
 - **消费配置展示**：编辑侧栏按基本信息、连接、认证/发现、队列分区，长字段整行、窄屏单列；解析参数与样例测试可展开。列表分离运行态、连接摘要和队列行，名称后展示有效配置及默认值，沿用语义主题 token；只改变展示，不修改消费或保存契约。
 - **消费重试与通知**：实例包含初始/封顶重试秒数（默认5/60）、告警开关（默认关闭）、渠道ID列表和冷却分钟数（默认10）。保存时验证渠道存在且启用，发送前再次核对；通知冷却元数据独立存SQLite，不属于配置JSON。运行及投递语义见 [Ingest设计](../ingest/sdd.md)。
 - **消费类型页签**：Status/Kafka/RabbitMQ/Pulsar 使用设计系统 Tabs；Status 为实例/配置主题消费状态和速度总览（详见 Monitor），其余三个页签保留连接与队列配置详情。数量含停用实例，新建默认当前协议，Status 默认 Kafka。

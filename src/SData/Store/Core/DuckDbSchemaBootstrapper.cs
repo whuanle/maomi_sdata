@@ -66,6 +66,7 @@ public class DuckDbSchemaBootstrapper
     /// <summary>
     /// 旧版 logs 天表补列：source（T121）与 id（行级雪花 id，幂等去重/行级定位）.
     /// ALTER TABLE ADD COLUMN IF NOT EXISTS 幂等；存量行补列为 NULL（历史行无行级身份）.
+    /// 仅作用于物理表（table_type='BASE TABLE'）——视图门面天对象（logs_yyyymmdd 视图）不可 ALTER.
     /// 表名仅取自库内 information_schema 枚举并通过 TimeTables.ParseDay 形态校验（非用户输入）.
     /// </summary>
     /// <param name="cancellationToken">取消.</param>
@@ -74,7 +75,7 @@ public class DuckDbSchemaBootstrapper
     {
         var tableNames = new List<string>();
         await foreach (var name in _connectionManager.QueryEachAsync(
-            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'logs\\_%' ESCAPE '\\'",
+            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'logs\\_%' ESCAPE '\\' AND table_type = 'BASE TABLE'",
             cancellationToken))
         {
             if (TimeTables.ParseDay(name) != null)

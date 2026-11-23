@@ -111,7 +111,7 @@ export function OverviewPage() {
         </Panel>
       </div>
 
-      <ResourcePanels resources={status?.resources} local={overview?.localResources} s3={overview?.s3Resources} />
+      <ResourcePanels resources={status?.resources} local={overview?.localResources} s3={overview?.s3Resources} tuning={status?.tuning} />
 
       <Panel title={t('overview.dataStats')}>
         <p className="my-2 text-xs text-subtle">{t('overview.statsHint')}</p>

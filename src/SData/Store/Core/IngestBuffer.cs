@@ -1,6 +1,5 @@
 using System.Threading.Channels;
 using DuckDB.NET.Data;
-using SData.Infra.Configuration;
 using SData.Store.Models;
 using System.Text;
 
@@ -46,11 +45,14 @@ public readonly struct IngestItem
     /// </summary>
     /// <param name="kind">类型.</param>
     /// <param name="record">记录.</param>
-    public IngestItem(IngestKind kind, object record, TaskCompletionSource? persisted = null)
+    /// <param name="persisted">可选的持久化完成回执.</param>
+    /// <param name="counted">是否占用条数闸门（MQ 持久化路径仅受字节预算约束，不占条数）.</param>
+    public IngestItem(IngestKind kind, object record, TaskCompletionSource? persisted = null, bool counted = true)
     {
         Kind = kind;
         Record = record;
         Persisted = persisted;
+        Counted = counted;
     }
 
     /// <summary>
@@ -65,17 +67,22 @@ public readonly struct IngestItem
 
     /// <summary>可选的持久化完成回执.</summary>
     public TaskCompletionSource? Persisted { get; }
+
+    /// <summary>是否占用条数闸门（写入器读出后按此释放）.</summary>
+    public bool Counted { get; }
 }
 
 /// <summary>
-/// 接入内存缓冲实现（有界 Channel，满则丢弃并计数）.
+/// 接入内存缓冲实现（动态闸门：条数 + 字节预算双 CAS，容量随 AdaptiveTuningService 扩缩；
+/// 通道本身以「硬顶 × 2」作溢出安全网，正常流量由动态闸门拒绝）.
 /// </summary>
 public class IngestBuffer : IIngestBuffer
 {
     private readonly Channel<IngestItem> _channel;
-    private readonly int _capacity;
-    private readonly long _byteBudgetBytes;
+    private int _capacity;
+    private long _byteBudgetBytes;
     private long _estimatedBytes;
+    private int _count;
     private IngestWriterFailure? _writerFailure;
     private int _persistWaiters;
 
@@ -127,17 +134,18 @@ public class IngestBuffer : IIngestBuffer
     /// <summary>
     /// Initializes a new instance of the <see cref="IngestBuffer"/> class.
     /// </summary>
-    /// <param name="systemOptions">系统配置.</param>
-    public IngestBuffer(SystemOptions systemOptions)
+    /// <param name="tuning">自动调参状态（初始容量/预算取基线，后续随扩缩调整）.</param>
+    public IngestBuffer(ITuningState tuning)
     {
-        _capacity = Math.Max(1, systemOptions.Ingest.BufferCapacity);
-        _byteBudgetBytes = Math.Max(1L, systemOptions.Ingest.BufferByteBudgetBytes);
-        _channel = Channel.CreateBounded<IngestItem>(new BoundedChannelOptions(_capacity)
+        // 安全网容量 = 条数硬顶 × 2：正常流量由动态闸门拒绝，通道满仅是极端兜底
+        _channel = Channel.CreateBounded<IngestItem>(new BoundedChannelOptions(Math.Max(1024, tuning.BufferCapacityCeiling * 2))
         {
             SingleReader = true,
             SingleWriter = false,
             FullMode = BoundedChannelFullMode.Wait,
         });
+        Volatile.Write(ref _capacity, Math.Max(1, tuning.BufferCapacity));
+        Volatile.Write(ref _byteBudgetBytes, Math.Max(1L, tuning.BufferByteBudgetBytes));
     }
 
     /// <summary>
@@ -160,11 +168,19 @@ public class IngestBuffer : IIngestBuffer
             return false;
         }
 
+        if (!TryReserveSlot())
+        {
+            ReleaseBufferedBytes(estimated);
+            Interlocked.Increment(ref _dropped[(int)kind]);
+            return false;
+        }
+
         if (_channel.Writer.TryWrite(new IngestItem(kind, record)))
         {
             return true;
         }
 
+        ReleaseSlot();
         ReleaseBufferedBytes(estimated);
         Interlocked.Increment(ref _dropped[(int)kind]);
         return false;
@@ -187,8 +203,18 @@ public class IngestBuffer : IIngestBuffer
                 continue;
             }
 
+            if (!TryReserveSlot())
+            {
+                ReleaseBufferedBytes(estimated);
+                Interlocked.Increment(ref _dropped[(int)kind]);
+                dropped++;
+                rejected.Add(records[i]);
+                continue;
+            }
+
             if (!_channel.Writer.TryWrite(new IngestItem(kind, record)))
             {
+                ReleaseSlot();
                 ReleaseBufferedBytes(estimated);
                 Interlocked.Increment(ref _dropped[(int)kind]);
                 dropped++;
@@ -220,8 +246,8 @@ public class IngestBuffer : IIngestBuffer
                 var estimated = EstimateRecord(records[i]);
                 await WaitReserveBytesAsync(estimated, cancellationToken);
                 var item = i == records.Count - 1
-                    ? new IngestItem(IngestKind.Log, records[i], receipt)
-                    : new IngestItem(IngestKind.Log, records[i]);
+                    ? new IngestItem(IngestKind.Log, records[i], receipt, counted: false)
+                    : new IngestItem(IngestKind.Log, records[i], counted: false);
                 try
                 {
                     await _channel.Writer.WriteAsync(item, cancellationToken);
@@ -284,6 +310,25 @@ public class IngestBuffer : IIngestBuffer
     /// <inheritdoc/>
     public bool TryEnqueueRumReplay(RumReplayRecord record) => TryEnqueue(IngestKind.RumReplay, record);
 
+    /// <summary>运行时调整条数容量与字节预算（缩容只影响新准入，存量自然排空）.</summary>
+    public void Resize(int capacityItems, long byteBudgetBytes)
+    {
+        Volatile.Write(ref _capacity, Math.Max(1, capacityItems));
+        Volatile.Write(ref _byteBudgetBytes, Math.Max(1L, byteBudgetBytes));
+    }
+
+    /// <summary>写入器释放已读出条目的条数闸门（仅 TryEnqueue 路径占用的条目计数）.</summary>
+    public void ReleaseSlots(int countedCount)
+    {
+        if (countedCount > 0)
+        {
+            Interlocked.Add(ref _count, -countedCount);
+        }
+    }
+
+    /// <summary>释放单个条数闸门（入队失败回滚）.</summary>
+    private void ReleaseSlot() => Interlocked.Decrement(ref _count);
+
     /// <inheritdoc/>
     public bool CanAcceptBytes(long bytes)
     {
@@ -292,16 +337,35 @@ public class IngestBuffer : IIngestBuffer
             return true;
         }
 
+        var budget = Volatile.Read(ref _byteBudgetBytes);
         var current = Volatile.Read(ref _estimatedBytes);
-        return current <= _byteBudgetBytes
-            && bytes <= _byteBudgetBytes - current;
+        return current <= budget
+            && bytes <= budget - current;
     }
 
     /// <inheritdoc/>
-    public int ApproximateBufferedCount => _channel.Reader.Count;
+    public int ApproximateBufferedCount => Volatile.Read(ref _count);
 
     /// <inheritdoc/>
-    public int Capacity => _capacity;
+    public int Capacity => Volatile.Read(ref _capacity);
+
+    /// <summary>条数闸门 CAS 预留（满即拒绝；容量动态可调）.</summary>
+    private bool TryReserveSlot()
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _count);
+            if (current >= Volatile.Read(ref _capacity))
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _count, current + 1, current) == current)
+            {
+                return true;
+            }
+        }
+    }
 
     private bool TryReserveBytes(long bytes)
     {
@@ -312,8 +376,9 @@ public class IngestBuffer : IIngestBuffer
 
         while (true)
         {
+            var budget = Volatile.Read(ref _byteBudgetBytes);
             var current = Volatile.Read(ref _estimatedBytes);
-            if (current > _byteBudgetBytes || bytes > _byteBudgetBytes - current)
+            if (current > budget || bytes > budget - current)
             {
                 return false;
             }
@@ -403,7 +468,7 @@ public class IngestBuffer : IIngestBuffer
         }
 
         stats.BufferedBytes = Volatile.Read(ref _estimatedBytes);
-        stats.ByteBudgetBytes = _byteBudgetBytes;
+        stats.ByteBudgetBytes = Volatile.Read(ref _byteBudgetBytes);
 
         return stats;
     }

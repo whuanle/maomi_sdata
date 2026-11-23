@@ -15,22 +15,25 @@ public class CachedQueryDslExecutor : IQueryDslExecutor
 {
     private const int CacheMaxRows = 1000;
 
+    /// <summary>结果缓存 TTL（秒；压测择优，仪表盘轮询在 TTL 内命中）.</summary>
+    private const int CacheTtlSeconds = 5;
+
+    /// <summary>结果缓存最大条目数.</summary>
+    private const int CacheMaxEntries = 256;
+
     private readonly IQueryDslExecutor _inner;
-    private readonly SystemOptions _options;
     private readonly MemoryCache _cache;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CachedQueryDslExecutor"/> class.
     /// </summary>
     /// <param name="inner">内层执行器.</param>
-    /// <param name="options">系统配置.</param>
-    public CachedQueryDslExecutor(IQueryDslExecutor inner, SystemOptions options)
+    public CachedQueryDslExecutor(IQueryDslExecutor inner)
     {
         _inner = inner;
-        _options = options;
         _cache = new MemoryCache(new MemoryCacheOptions
         {
-            SizeLimit = Math.Max(16, options.DuckDb.QueryCacheMaxEntries),
+            SizeLimit = CacheMaxEntries,
         });
     }
 
@@ -38,7 +41,7 @@ public class CachedQueryDslExecutor : IQueryDslExecutor
     public async Task<SearchDslResponse> ExecuteAsync(QueryDslModel model, DataDomain domain, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(model);
-        var ttlSeconds = _options.DuckDb.QueryCacheTtlSeconds;
+        var ttlSeconds = CacheTtlSeconds;
         if (ttlSeconds <= 0 || model.Range == null)
         {
             return await _inner.ExecuteAsync(model, domain, cancellationToken);

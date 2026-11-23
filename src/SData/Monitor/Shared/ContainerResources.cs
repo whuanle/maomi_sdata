@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace SData.Monitor;
 
-/// <summary>只读取当前进程可见的 cgroup 挂载；不要求宿主目录或特权权限.</summary>
+/// <summary>只读取当前进程可见的 cgroup 挂载；不要求宿主目录或等级权限.</summary>
 public static class ContainerResources
 {
     public sealed record Values(long? MemoryLimit, long? MemoryUsed, double? CpuLimit);
@@ -49,7 +49,7 @@ public static class ContainerResources
         var cpu = Resolve("cpu");
         string? ReadAt(string? directory, string name) => directory == null ? null : read(Path.Combine(directory, name))?.Trim();
         var limit = Number(ReadAt(memory, "memory.max")) ?? Number(ReadAt(memory, "memory.limit_in_bytes"));
-        if (limit >= 1L << 60) limit = null; // v1 unlimited sentinel, not real RAM capacity
+        if (limit >= 1L << 60) limit = null; // v1 无限哨兵值，非真实内存容量
         var used = Number(ReadAt(memory, "memory.current")) ?? Number(ReadAt(memory, "memory.usage_in_bytes"));
         var parts = ReadAt(cpu, "cpu.max")?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         var quota = parts is { Length: 2 } ? Number(parts[0]) : Number(ReadAt(cpu, "cpu.cfs_quota_us"));

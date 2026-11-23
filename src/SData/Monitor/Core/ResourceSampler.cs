@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace SData.Monitor;
 
 /// <summary>后台差分采样，不在请求中等待 CPU 采样窗口.</summary>
-public sealed class ResourceSampler(ILogger<ResourceSampler> logger) : BackgroundService
+public sealed class ResourceSampler(ILogger<ResourceSampler> logger) : BackgroundService, IResourceSnapshotProvider
 {
     private ResourceSnapshot _snapshot = new();
     private (ulong Total, ulong Idle)? _systemBaseline;
@@ -15,6 +15,9 @@ public sealed class ResourceSampler(ILogger<ResourceSampler> logger) : Backgroun
     private long _timestamp;
 
     public ResourceSnapshot Snapshot => Volatile.Read(ref _snapshot);
+
+    /// <inheritdoc/>
+    public ResourceSnapshot Latest => Volatile.Read(ref _snapshot);
 
     public static double? CpuPercent(double used, double total)
         => total > 0 && used >= 0 ? Math.Clamp(used / total * 100, 0, 100) : null;

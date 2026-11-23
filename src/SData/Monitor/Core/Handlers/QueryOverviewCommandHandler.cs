@@ -29,7 +29,7 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
     private readonly SystemOptions _systemOptions;
     private readonly ISystemSettingsProvider _settings;
     private readonly IStorageMetrics _metrics;
-    private readonly IDuckDbRuntimeSettings _duckDb;
+    private readonly DuckDbConnectionManager _duckDb;
     private readonly SemaphoreSlim _todayRowsCacheLock = new(1, 1);
     private DateTimeOffset _todayRowsCacheDate;
     private DateTimeOffset _todayRowsCacheExpiresAt;
@@ -42,7 +42,7 @@ public class QueryOverviewCommandHandler : IRequestHandler<QueryOverviewCommand,
     /// <param name="storeInfo">存储信息.</param>
     /// <param name="systemOptions">系统配置.</param>
     /// <param name="settings">有效运行配置.</param>
-    public QueryOverviewCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ISystemSettingsProvider settings, IStorageMetrics metrics, IDuckDbRuntimeSettings duckDb)
+    public QueryOverviewCommandHandler(IIngestBuffer buffer, IStoreInfo storeInfo, SystemOptions systemOptions, ISystemSettingsProvider settings, IStorageMetrics metrics, DuckDbConnectionManager duckDb)
     {
         _buffer = buffer;
         _storeInfo = storeInfo;

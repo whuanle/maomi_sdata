@@ -434,3 +434,51 @@ Feature: 冷存档与三段保留（T512，契约 C4/C5）
     When Resolve 查询区间
     Then 双写分片仅收录本地绝对路径（防同分片重复扫描出重复行），S3 行不触发缓存预热；
          S3-only 分片仍解析 s3:// 路径（缓存命中/直读+预热）
+
+## 视图门面与 resource 去重（2026-11-23）
+
+  @ST-RES1 @manual
+  Scenario: logs/traces 天对象为视图门面三件套
+    Given 写入器为新的一天建表
+    Then 库内创建 log_data/trace_data 窄表（resource_id 字典编码）、log_res/trace_res 字典表，
+      以及暴露旧宽列序的 logs/traces 视图；查询层（LogStore 投影、DSL resource.xxx json_extract、
+      冷层 parquet union、UI facet SQL）不感知物理布局变化
+
+  @ST-RES2 @manual
+  Scenario: 同一天同一 resource 只落一行字典
+    Given OTLP 批次内多个 LogRecord 共享同一 resource 块（同引用）
+    When 写入器批量落库
+    Then ResourceInterner 以引用相等快路径去重，字典表仅新增 distinct 条目，数据行只写 resource_id；
+      不同天、服务重启后雪花 id 仍全局唯一
+
+  @ST-RES3 @manual
+  Scenario: 旧版宽表天共存与自适应写入
+    Given 升级前遗留的 logs_yyyymmdd 物理宽表
+    When 写入器面对宽表天与视图天混合的批次
+    Then 按 SELECT LIMIT 0 列布局自适应（宽表写 resource 原文、窄表写 resource_id），跨形态 UNION 查询列形状一致
+
+  @ST-RES4 @manual
+  Scenario: 视图天的冻结、归档与保留
+    When 归档冻结视图天、保留策略删除过期天
+    Then 伴生物理表在单事务内原子改名并重建宽列快照视图（归档 COPY/词项索引零改动），
+      DROP 视图连带 DROP 伴生窄表与字典表；冷层 parquet 保持宽列格式
+
+## 缓冲自适应扩缩（2026-11-23）
+
+  @ST-AT1 @manual
+  Scenario: 高水位且有内存余量时扩容
+    Given 接入流量使缓冲利用率连续 2 个 tick ≥80%（或发生丢弃）
+    When 进程占用 + DuckDB 限额 + 新预算 ≤ 环境内存 × 85%（OOM 硬顶安全线）
+    Then 缓冲容量与字节预算按 ×1.25 扩容（丢弃压力下批量上限同步提升），每次调整记录日志与原因
+
+  @ST-AT2 @manual
+  Scenario: 内存不足不越硬顶
+    Given 环境内存余量不足以再扩容
+    When 扩容判定触发
+    Then 扩容被阻塞并记录警告，缓冲保持当前值继续按既有策略背压（429/丢弃计数），容器不被 OOM 杀死
+
+  @ST-AT3 @manual
+  Scenario: 持续空闲回缩到基线
+    Given 缓冲利用率 ≤10% 持续 5 分钟
+    When 缩容判定触发
+    Then 容量与预算按 ×0.75 回缩（不低于环境基线），仅影响新准入，存量自然排空

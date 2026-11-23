@@ -1,8 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import type { ResourceSnapshot, LocalStorageSnapshot, S3StorageSnapshot } from '@/api/types';
+import type { ResourceSnapshot, LocalStorageSnapshot, S3StorageSnapshot, TuningSnapshot } from '@/api/types';
 import { formatBytes, formatDateTime } from '@/utils/format';
 
-export function ResourcePanels({ resources, local, s3 }: { resources?: ResourceSnapshot; local?: LocalStorageSnapshot; s3?: S3StorageSnapshot }) {
+export function ResourcePanels({ resources, local, s3, tuning }: { resources?: ResourceSnapshot; local?: LocalStorageSnapshot; s3?: S3StorageSnapshot; tuning?: TuningSnapshot | null }) {
   const { t } = useTranslation();
   const unknown = t('overview.unknown');
   const bytes = (value?: number | null) => value == null ? unknown : formatBytes(value);
@@ -68,6 +68,16 @@ export function ResourcePanels({ resources, local, s3 }: { resources?: ResourceS
       {row('s3Bytes', bytes(s3?.bytes))}
       {row('objects', s3?.objects ?? unknown)}
       <p className="mt-3 text-xs text-subtle">{t('overview.resource.s3Hint')}</p>
+    </>)}
+    {tuning && panel('tuning', <>
+      {row('tuningCores', tuning.effectiveCores)}
+      {row('tuningMemoryLimit', bytes(tuning.memoryLimitBytes))}
+      {row('tuningDuckDb', `${tuning.duckDbMemoryLimit} / ${tuning.duckDbThreads} / ${tuning.duckDbMaxConcurrentQueries}`)}
+      {row('tuningBuffer', `${tuning.bufferCapacity} / ${bytes(tuning.bufferByteBudgetBytes)}`)}
+      {row('tuningBufferCeiling', `${tuning.bufferCapacityBaseline}+ / ${bytes(tuning.bufferByteBudgetCeilingBytes)}`)}
+      {row('tuningBatch', `${tuning.batchSize} / ${tuning.flushIntervalMs}ms`)}
+      {row('tuningAdjust', `${tuning.adjustCount}${tuning.lastAdjustReason ? ` · ${tuning.lastAdjustReason}` : ''}`)}
+      <p className="mt-3 text-xs text-subtle">{t('overview.resource.tuningHint')}</p>
     </>)}
   </div>;
 }

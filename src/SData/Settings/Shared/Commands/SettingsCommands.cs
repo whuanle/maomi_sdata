@@ -13,20 +13,6 @@ public class QuerySettingsCommand : IRequest<SettingsResponse>
 {
 }
 
-/// <summary>保存 DuckDB 内存限制（立即生效）.</summary>
-public class SaveDuckDbSettingsCommand : IRequest<DuckDbSettingsResponse>, IModelValidator<SaveDuckDbSettingsCommand>
-{
-    /// <summary>容量值，支持 MB/GB/MiB/GiB.</summary>
-    public string MemoryLimit { get; set; } = string.Empty;
-
-    /// <inheritdoc/>
-    public static void Validate(AbstractValidator<SaveDuckDbSettingsCommand> validate)
-    {
-        validate.RuleFor(x => x.MemoryLimit).Must(value => DuckDbMemoryLimit.TryNormalize(value, out _))
-            .WithMessage("内存限制必须是有效的正数容量，例如 512MB 或 2GB");
-    }
-}
-
 /// <summary>
 /// 保存 S3 冷存储设置（立即重建 SECRET，立即生效）.
 /// </summary>
@@ -111,20 +97,12 @@ public class SaveRuntimeSettingsCommand : IRequest<RuntimeSettings>, IModelValid
         validate.RuleFor(x => x.Runtime.Alerts.MaxEnabledRules).InclusiveBetween(1, 500);
         validate.RuleFor(x => x.Runtime.Alerts.QueryTimeoutSeconds).InclusiveBetween(1, 10);
         validate.RuleFor(x => x.Runtime.Alerts.BudgetSecondsPerMinute).InclusiveBetween(1, 30);
-        validate.RuleFor(x => x.Runtime.Alerts.MaxPendingDeliveries).InclusiveBetween(1, 10000);
         validate.RuleFor(x => x.Runtime.Agents.RequestsPerMinute).InclusiveBetween(1, 600);
-        validate.RuleFor(x => x.Runtime.Agents.PerKeyConcurrency).InclusiveBetween(1, 4);
-        validate.RuleFor(x => x.Runtime.Agents.GlobalConcurrency).InclusiveBetween(1, 16);
         validate.RuleFor(x => x.Runtime.Agents.QueryTimeoutSeconds).InclusiveBetween(1, 10);
-        validate.RuleFor(x => x.Runtime.DuckDb.Threads).InclusiveBetween(1, 64);
-        validate.RuleFor(x => x.Runtime.DuckDb.MaxConcurrentQueries).InclusiveBetween(1, 32);
         validate.RuleFor(x => x.Runtime.DuckDb.QueryTimeoutSeconds).InclusiveBetween(1, 300);
         validate.RuleFor(x => x.Runtime.DuckDb.MaxQueryDays).InclusiveBetween(1, 3650);
         validate.RuleFor(x => x.Runtime.DuckDb.ColdMaxQueryDays).InclusiveBetween(1, 3650);
-        validate.RuleFor(x => x.Runtime.ColdCache.MaxBytes).InclusiveBetween(1L << 20, 1L << 40);
         validate.RuleFor(x => x.Runtime.Auth.TokenExpireMinutes).InclusiveBetween(1, 43200);
-        validate.RuleFor(x => x.Runtime.Ingest.BatchSize).InclusiveBetween(1, 100000);
-        validate.RuleFor(x => x.Runtime.Ingest.FlushIntervalMs).InclusiveBetween(1, 60000);
     }
 }
 

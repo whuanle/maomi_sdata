@@ -3,7 +3,7 @@ import { Copy, FileJson, RefreshCw } from 'lucide-react';
 import type { StartupSettings } from '@/api/types';
 import { Button, toast } from '@/design-system';
 
-/** configs/system.json 覆盖模板（键与后端 SystemOptions/MQTT 配置绑定一致，重启生效）. */
+/** configs/system.json 覆盖模板（仅功能/部署项；内存、并发、缓冲等性能参数由系统按环境自动调控，重启生效）. */
 const TEMPLATE = JSON.stringify(
   {
     SData: {
@@ -13,29 +13,16 @@ const TEMPLATE = JSON.stringify(
       Database: { Path: 'data/sdata.db' },
       DuckDb: {
         Path: 'data/sdata.duckdb',
-        MemoryLimit: '2GB',
-        CheckpointThreshold: '1GB',
-        QueryCacheTtlSeconds: 5,
-        QueryCacheMaxEntries: 256,
         TempDirectory: '',
       },
       Ingest: {
         RequireAuth: true,
-        BufferCapacity: 100000,
-        BufferByteBudgetBytes: 268435456,
       },
     },
   },
   null,
   2,
 );
-
-/** 字节预算 → 人类可读（MB/GB，与后端 256MB/2GB 默认值呼应）. */
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_073_741_824) return `${Number((bytes / 1_073_741_824).toFixed(2))}GB`;
-  if (bytes >= 1_000_000) return `${Number((bytes / 1_000_000).toFixed(1))}MB`;
-  return `${bytes}B`;
-}
 
 /** 启动配置页签：说明 configs/system.json 覆盖机制 + 当前生效值（只读快照）. */
 export function StartupConfigPanel({ startup, onRetry }: { startup: StartupSettings | null | undefined; onRetry: () => void }) {
@@ -60,14 +47,8 @@ export function StartupConfigPanel({ startup, onRetry }: { startup: StartupSetti
     [t('settings.startupWebUI'), startup.webUi ? t('settings.startupOn') : t('settings.startupOff')],
     [t('settings.startupDatabasePath'), startup.databasePath],
     [t('settings.startupDuckDbPath'), startup.duckDbPath],
-    [t('settings.startupMemoryLimit'), startup.duckDbMemoryLimit],
-    [t('settings.startupCheckpointThreshold'), startup.duckDbCheckpointThreshold],
-    [t('settings.startupQueryCacheTtl'), `${startup.duckDbQueryCacheTtlSeconds}s`],
-    [t('settings.startupQueryCacheMaxEntries'), String(startup.duckDbQueryCacheMaxEntries)],
     [t('settings.startupTempDirectory'), startup.duckDbTempDirectory?.trim() || t('settings.startupSystemDefault')],
     [t('settings.startupIngestRequireAuth'), startup.ingestRequireAuth ? t('settings.startupOn') : t('settings.startupOff')],
-    [t('settings.startupBufferCapacity'), String(startup.ingestBufferCapacity)],
-    [t('settings.startupBufferByteBudget'), `${formatBytes(startup.ingestBufferByteBudgetBytes)} (${startup.ingestBufferByteBudgetBytes})`],
   ];
 
   return (

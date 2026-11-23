@@ -13,9 +13,6 @@ public static class SettingKeys
     /// <summary>三段保留（RetentionPlanOptions）.</summary>
     public const string Retention = "system:retention";
 
-    /// <summary>DuckDB 内存限制（DuckDbSettings）.</summary>
-    public const string DuckDb = "system:duckdb";
-
     /// <summary>运行参数（RuntimeSettings；设置页「运行参数」，保存后热生效）.</summary>
     public const string Runtime = "system:runtime";
 
@@ -51,9 +48,6 @@ public interface ISystemSettingsProvider
     /// </summary>
     /// <returns>合并后的 S3 配置.</returns>
     S3Options GetS3();
-
-    /// <summary>DuckDB 内存限制合并配置.</summary>
-    DuckDbSettings GetDuckDb();
 
     /// <summary>
     /// 运行参数合并配置（DB 覆盖 &gt; 文件回退；每次调用读取，保存即生效）.

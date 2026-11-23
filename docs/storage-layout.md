@@ -18,13 +18,21 @@
 
 ### 按天分表（写入器自动建表 + 索引）
 
+logs/traces 自 2026-11-23 起为「视图门面」天对象：物理数据在 data 窄表（resource 字典编码为 resource_id），resource 原文一天一行存于 res 字典表；`logs_yyyymmdd` 本身是暴露旧宽列序的视图，查询层（LogStore/QueryDsl/冷层 parquet union/UI facet SQL）零改动。旧版本升级前遗留的物理宽表原样共存，写入端按 `SELECT * LIMIT 0` 的列布局自适应（宽表写 resource 原文，窄表写 resource_id）。
+
 | 表 | 列 |
 |---|---|
-| `logs_yyyymmdd` | ts, service, severity, body, trace_id, span_id, attributes(JSON 字符串), resource, source（ES Bulk 索引名，T121；旧表启动时由 Schema 引导 `ALTER TABLE ADD COLUMN IF NOT EXISTS source` 幂等补列） |
-| `traces_yyyymmdd` | trace_id, span_id, parent_span_id, ts, duration_us, service, name, kind, status, attributes, events, resource（trace_id 建 ART 索引） |
+| `log_data_yyyymmdd` | id, ts, service, severity, body, trace_id, span_id, attributes(JSON 字符串), resource_id(BIGINT → log_res 表), source（ES Bulk 索引名，T121） |
+| `log_res_yyyymmdd` | id(BIGINT), resource（同一天内 distinct resource 原文，一行一条；ResourceInterner 按天去重，雪花 id 跨重启唯一） |
+| `logs_yyyymmdd`（视图） | id, ts, service, severity, body, trace_id, span_id, attributes, resource, source = `log_data LEFT JOIN log_res ON resource_id`（与旧宽表列名/列序一致） |
+| `trace_data_yyyymmdd` | trace_id, span_id, parent_span_id, ts, duration_us, service, name, kind, status, attributes, events, resource_id（trace_id 建 ART 索引，开关 `SData:Ingest:TraceIndexEnabled`） |
+| `trace_res_yyyymmdd` | id, resource |
+| `traces_yyyymmdd`（视图） | trace_id, span_id, parent_span_id, ts, duration_us, service, name, kind, status, attributes, events, resource = `trace_data LEFT JOIN trace_res` |
 | `metrics_yyyymmdd` | name, ts, value, labels(JSON 字符串), kind |
 | `iot_yyyymmdd` | device_key, signal, ts, num_value, str_value, quality |
 | `mq_consumption_yyyymmdd` | ts, instance_id, session_id, rule, match_mode, state, received_messages/bytes, persisted_records, parse_failures, skipped_messages, confirmed_messages, confirmation_failures, sampling_gaps |
+
+视图门面的配套规则：归档冻结把伴生物理表原子改名为 `log_data_archive_{guid}_{day}`/`log_res_archive_{guid}_{day}` 并以同名宽列视图快照（`logs_archive_{guid}_{day}`）暴露，归档 COPY/词项索引零改动；保留策略 DROP 视图连带 DROP 伴生表。冷层 parquet 仍为宽列格式（resource 原文），与本地天表视图 `UNION ALL` 列形状一致。
 
 消费统计每 10 秒经统一缓冲批量写入，按消费时间而非日志事件时间分表；累计值按会话解释，不可逐样本求和。skipped_messages仅兼容保留，新采样固定0；当前阻塞消息数/最早阻塞时间在diagnostics中保存，不表示已确认或丢弃。沿用日志热保留周期，不参与冷归档，不将历史状态当作当前在线状态。
 
@@ -47,18 +55,21 @@
 
 - 查询：时间范围映射到天表集合，`UNION ALL` 合并后外层过滤/排序/分页；标签过滤用 `json_extract_string(labels, '$.key')`（路径为参数绑定值）。
 - 聚合：`epoch_ms(ts) // step * step` 分桶 + avg/sum/max/min/count/arg_max/quantile_cont。
-- 保留：`RetentionService` 每小时 DROP 过期天表 + `CHECKPOINT` 收缩 WAL；`Retention:{Logs,Traces,Metrics,Iot}`（天，0=永久）。
+- 保留：`RetentionService` 每小时 DROP 过期天对象 + `CHECKPOINT` 收缩 WAL（logs/traces 视图天连带 DROP 伴生窄表/字典表）；`Retention:{Logs,Traces,Metrics,Iot}`（天，0=永久）。
 - 初始化 DDL 内嵌于 `SData.Store.Core`（`DuckDb/Ddl/*.sql`，幂等），运行时由 Schema 引导执行；`tool/SchemaSync duck` 可手动补跑。
-- 运行参数（小内存）：`memory_limit` 文件默认512MB，管理员可在系统设置 DuckDB 页签热调整并持久保存（详见 [设置设计](settings/sdd.md#duckdb-内存)）；`threads` 可配、`preserve_insertion_order=false`；查询跨度上限 `MaxQueryDays`。
+- 运行参数：`memory_limit`/`threads`/`max_concurrent_queries`/缓存容量等性能参数由系统按环境（cgroup CPU 配额与容器内存上限）自动计算基线，**不再提供用户配置**（system.json 残留键被忽略，详见 [设置设计](settings/sdd.md)与监控页 Tuning 面板）；查询跨度上限 `MaxQueryDays`、分析查询预算 `QueryTimeoutSeconds` 仍为可配置策略项；`preserve_insertion_order=false` 固定启用。
 
 ## 写入路径
 
 ```
-HTTP ingest ──→ IIngestBuffer（有界 Channel，满则丢弃计数）
-                     │ IngestWriterService（~200ms / 5000条 聚合）
+HTTP ingest ──→ IIngestBuffer（动态双闸门：条数容量 + 字节预算，随 AdaptiveTuningService 扩缩）
+                     │ IngestWriterService（batch/flush 取 ITuningState，基线按环境自算）
                      ▼
-        按（类型,天）分组 → DuckDB Appender 批量写入
+        按（类型,天）分组 → logs/traces：ResourceInterner 去重 → 字典表新条目先落
+                          → DuckDB Appender 批量写窄表（resource_id）；旧宽表天直接写原文
 ```
+
+自适应调参（`AdaptiveTuningService`，10s tick）：缓冲利用率 ≥80%（或发生丢弃）连续 2 个 tick 且内存有余量（进程占用 + DuckDB 限额 + 缓冲预算 ≤ 环境内存 × 85%）时逐步扩容（×1.25，硬顶=环境内存推导）；持续空闲 5 分钟按 ×0.75 回缩到基线。当前生效值经 `/api/monitor/status` 的 `tuning` 段与总览页「自动调参」面板只读展示。
 
 监控指标：`/metrics` 暴露 `sdata_buffer_count/sdata_ingest_processed_total/sdata_ingest_dropped_total{kind}`。
 

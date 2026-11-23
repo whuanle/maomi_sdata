@@ -245,15 +245,12 @@ public class S3Options
 }
 
 /// <summary>
-/// 冷数据本地缓存配置（S3 归档对象预热到本地磁盘，LRU 容量淘汰）.
+/// 冷数据本地缓存配置（S3 归档对象预热到本地磁盘；容量上限由系统按环境内存自动调控）.
 /// </summary>
 public class ColdCacheOptions
 {
     /// <summary>是否启用（false = 不预热不缓存，S3 恒直读）.</summary>
     public bool Enabled { get; set; } = true;
-
-    /// <summary>缓存目录容量上限（字节），超限按最久未访问淘汰.</summary>
-    public long MaxBytes { get; set; } = 2L * 1024 * 1024 * 1024;
 }
 
 /// <summary>
@@ -268,7 +265,7 @@ public class DatabaseOptions
 }
 
 /// <summary>
-/// DuckDB 分析库配置（内网单机小内存部署，默认限制内存与线程）.
+/// DuckDB 分析库配置（仅保留路径/临时目录等部署项；内存、线程、并发、缓存等性能参数由系统按环境自动调控，不向用户暴露）.
 /// </summary>
 public class DuckDbOptions
 {
@@ -276,47 +273,6 @@ public class DuckDbOptions
     /// duckdb 文件路径.
     /// </summary>
     public string Path { get; set; } = "data/sdata.duckdb";
-
-    /// <summary>
-    /// 内存上限（DuckDB memory_limit，如 512MB）.
-    /// </summary>
-    public string MemoryLimit { get; set; } = "2GB";
-
-    /// <summary>
-    /// 线程数，默认 8，0 = 自动.
-    /// </summary>
-    public int Threads { get; set; } = 8;
-
-    /// <summary>
-    /// 同时执行的查询数（1–32），默认 4；小内存部署可调回 1 降低查询资源竞争.
-    /// </summary>
-    public int MaxConcurrentQueries { get; set; } = 4;
-
-    /// <summary>
-    /// WAL checkpoint 阈值（DuckDB checkpoint_threshold，如 128MB）；WAL 超过该值在提交时触发 checkpoint.
-    /// 调大可显著降低高频提交时 checkpoint 抢占 commit 的概率；空 = 使用引擎默认.
-    /// </summary>
-    public string CheckpointThreshold { get; set; } = "1GB";
-
-    /// <summary>
-    /// DSL 查询结果缓存 TTL（秒，0 = 关闭）。range 尾端按 TTL 对齐时间桶，仪表盘轮询在 TTL 内命中缓存；最坏陈旧度 = TTL.
-    /// </summary>
-    public int QueryCacheTtlSeconds { get; set; } = 5;
-
-    /// <summary>
-    /// DSL 查询结果缓存最大条目数.
-    /// </summary>
-    public int QueryCacheMaxEntries { get; set; } = 256;
-
-    /// <summary>
-    /// 分析查询（{{logs}} 占位符 SQL）结果缓存 TTL（秒，0 = 关闭）。窗口尾端按 TTL 对齐时间桶，仪表盘重复轮询在 TTL 内命中缓存；最坏陈旧度 = TTL.
-    /// </summary>
-    public int AnalyticsQueryCacheTtlSeconds { get; set; } = 5;
-
-    /// <summary>
-    /// 分析查询结果缓存最大条目数.
-    /// </summary>
-    public int AnalyticsQueryCacheMaxEntries { get; set; } = 256;
 
     /// <summary>分析查询预算（秒，1–300），包含准入等待及原生执行.</summary>
     public int QueryTimeoutSeconds { get; set; } = 30;
@@ -385,7 +341,7 @@ public class AuthOptions
 }
 
 /// <summary>
-/// 数据接入配置.
+/// 数据接入配置（仅保留鉴权等部署项；缓冲容量/字节预算/批量/间隔由系统自动调控，见 Store 的 ITuningState）.
 /// </summary>
 public class IngestOptions
 {
@@ -398,26 +354,6 @@ public class IngestOptions
     /// 首次启动时创建的默认接入 key.
     /// </summary>
     public string InitialApiKey { get; set; } = string.Empty;
-
-    /// <summary>
-    /// 内存缓冲容量（条），超过后拒绝写入返回 429.
-    /// </summary>
-    public int BufferCapacity { get; set; } = 100_000;
-
-    /// <summary>
-    /// 内存缓冲估算字节预算；超过后拒绝整批并返回 429.
-    /// </summary>
-    public long BufferByteBudgetBytes { get; set; } = 256L * 1024 * 1024;
-
-    /// <summary>
-    /// 批量落库条数（DuckDB commit 成本近似固定，批越大摊薄越狠）.
-    /// </summary>
-    public int BatchSize { get; set; } = 50_000;
-
-    /// <summary>
-    /// 落库间隔（毫秒）.
-    /// </summary>
-    public int FlushIntervalMs { get; set; } = 500;
 
     /// <summary>
     /// 链路热表 trace_id ART 索引开关. 压测（900 万 span 热表）显示：索引维护让 traces 写入吞吐下降约

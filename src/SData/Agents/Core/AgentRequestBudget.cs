@@ -4,11 +4,12 @@ using Microsoft.Extensions.DependencyInjection;
 using SData.Database;
 using SData.Infra.Services;
 using SData.Settings;
+using SData.Store;
 
 namespace SData.Agents;
 
-/// <summary>每个协议请求重新鉴权；限制每凭据速率和并发，避免长连接绕过撤销（预算取运行参数，每请求读取）.</summary>
-public class AgentRequestBudget(ISystemSettingsProvider settings)
+/// <summary>每个协议请求重新鉴权；限制每凭据速率和并发，避免长连接绕过撤销（速率取运行参数，并发上限取自动调参）.</summary>
+public class AgentRequestBudget(ISystemSettingsProvider settings, ITuningState tuning)
 {
     private readonly ISystemSettingsProvider _settings = settings;
     private readonly object _sync = new();
@@ -58,7 +59,7 @@ public class AgentRequestBudget(ISystemSettingsProvider settings)
                 _entries[id.Value] = entry = new Entry();
             }
             if (entry.Window != window) { entry.Window = window; entry.Count = 0; }
-            if (entry.Count >= Math.Clamp(limits.RequestsPerMinute, 1, 600) || entry.Active >= Math.Clamp(limits.PerKeyConcurrency, 1, 4) || _active >= Math.Clamp(limits.GlobalConcurrency, 1, 16))
+            if (entry.Count >= Math.Clamp(limits.RequestsPerMinute, 1, 600) || entry.Active >= Math.Clamp(tuning.AgentsPerKeyConcurrency, 1, 4) || _active >= Math.Clamp(tuning.AgentsGlobalConcurrency, 1, 16))
             { context.Response.StatusCode = 429; return; }
             entry.Count++;
             entry.Active++;

@@ -41,3 +41,8 @@
 
 - Prometheus 文本与 /metrics 端点名与 OTLP /v1/metrics 无冲突（路径不同）。
 - 通道健康"健康"定义暂为 dropped == 0，比率阈值待实际运行数据校准。
+
+### 自动调参状态（2026-11-23）
+
+- `AdaptiveTuningService`（Store.Core，BackgroundService，10s tick）：输入 `IResourceSnapshotProvider.Latest`（ResourceSampler 双注册）与 `IngestBuffer.GetStats()`；高水位（≥80% 连续 2 tick 或发生丢弃）且内存余量满足「进程占用 + DuckDB 限额 + 新预算 ≤ 环境内存 × 85%」时 ×1.25 扩容（硬顶由环境内存推导），空闲 5 分钟 ×0.75 回缩到 `ITuningState` 基线；DuckDB 内存/线程/并发为启动静态基线不做运行中调整。
+- `/api/monitor/status` 响应新增 `tuning`（`TuningSnapshot`：当前各生效值、最近调整时间/原因/次数）；前端总览页 ResourcePanels 增加只读「自动调参」面板（旧后端字段缺失时隐藏）。

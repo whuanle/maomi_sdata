@@ -10,8 +10,9 @@ namespace SData.Store.Core;
 
 /// <summary>
 /// DuckDB 连接管理器（单进程持有数据库实例，写串行 + 读克隆连接）.
+/// 内存/线程/并发等运行参数由 ITuningState 在初始化时注入（自动调控，不读用户配置）.
 /// </summary>
-public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRuntimeSettings, IStorePerformanceMetrics
+public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IStorePerformanceMetrics
 {
     private readonly DuckDbOptions _options;
     private readonly S3Options _s3;
@@ -23,16 +24,17 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
     private readonly SemaphoreSlim _maintenanceLock = new(1, 1);
     private readonly ConcurrentDictionary<string, string[]> _logColumns = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _tables = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _views = new(StringComparer.OrdinalIgnoreCase);
     private DuckDBConnection? _master;
     private int _disposed;
     private long _lastResourceDiagnosticTicks;
     private sealed record MemoryState(string Configured, string Effective);
     private MemoryState _memory = new(string.Empty, string.Empty);
 
-    /// <inheritdoc/>
+    /// <summary>配置的内存限制.</summary>
     public string MemoryLimit => Volatile.Read(ref _memory).Configured;
 
-    /// <inheritdoc/>
+    /// <summary>DuckDB 读回的实际生效限制.</summary>
     public string EffectiveMemoryLimit => Volatile.Read(ref _memory).Effective;
     private readonly ArchiveCoordination _archiveCoordination = new();
     private readonly StorePerformanceMetrics _performanceMetrics = new();
@@ -199,6 +201,10 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
 
     internal void InvalidateLogColumns(string table) => _logColumns.TryRemove(table, out _);
 
+    /// <summary>logs 数据表两种合法列布局：旧版物理宽表（resource 原文）与视图门面窄表（resource_id 字典编码）.</summary>
+    internal static readonly string[] WideLogColumns = ["id", "ts", "service", "severity", "body", "trace_id", "span_id", "attributes", "resource", "source"];
+    internal static readonly string[] NarrowLogColumns = ["id", "ts", "service", "severity", "body", "trace_id", "span_id", "attributes", "resource_id", "source"];
+
     internal async Task<IReadOnlyList<string>> GetLogColumnsAsync(DuckDBConnection connection, string table, CancellationToken token)
     {
         if (_logColumns.TryGetValue(table, out var columns))
@@ -211,14 +217,18 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
         command.CommandText = $"SELECT * FROM {table} LIMIT 0";
         using var reader = await command.ExecuteReaderAsync(token);
         columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
-        string[] expected = ["id", "ts", "service", "severity", "body", "trace_id", "span_id", "attributes", "resource", "source"];
-        if (columns.Length != expected.Length || !columns.ToHashSet(StringComparer.Ordinal).SetEquals(expected))
+        if (!MatchesLayout(columns, WideLogColumns) && !MatchesLayout(columns, NarrowLogColumns))
         {
             throw new InvalidOperationException("日志表列布局不受支持，请检查表结构");
         }
 
         _logColumns[table] = columns;
         return columns;
+    }
+
+    private static bool MatchesLayout(IReadOnlyList<string> columns, string[] expected)
+    {
+        return columns.Count == expected.Length && columns.ToHashSet(StringComparer.Ordinal).SetEquals(expected);
     }
 
     internal void HidePublishedSnapshot(string table) => _publishedSnapshots.TryAdd(table, 0);
@@ -233,17 +243,64 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
             return null;
         }
 
-        var snapshot = TimeTables.ArchiveName(prefix, day);
+        if (TimeTables.IsViewBacked(prefix) && _views.ContainsKey(table))
+        {
+            // 视图门面天：伴生物理表整体改名为快照 + 视图重建为宽列快照（归档 COPY/词项索引零改动）。
+            // 四条 DDL 在一个事务内原子提交，中断即整体回滚，不会留下指向已改名表的坏视图
+            var (snapshot, dataSnapshot, resSnapshot) = SnapshotNames(prefix, day);
+            var dataTable = TimeTables.DataTableName(prefix, day);
+            var resTable = TimeTables.ResTableName(prefix, day);
+            using var writeLease = await LockWriteAsync(token);
+            using var connection = CloneConnection();
+            using var transaction = connection.BeginTransaction();
+            await ExecuteInTransactionAsync(connection, transaction, $"ALTER TABLE {dataTable} RENAME TO {dataSnapshot}", token);
+            await ExecuteInTransactionAsync(connection, transaction, $"ALTER TABLE {resTable} RENAME TO {resSnapshot}", token);
+            await ExecuteInTransactionAsync(connection, transaction, $"DROP VIEW {table}", token);
+            await ExecuteInTransactionAsync(connection, transaction, TimeTables.ViewSql(snapshot, dataSnapshot, resSnapshot, prefix).Replace("IF NOT EXISTS ", string.Empty, StringComparison.Ordinal), token);
+            transaction.Commit();
+            _tables.TryRemove(table, out _);
+            _views.TryRemove(table, out _);
+            _tables.TryRemove(dataTable, out _);
+            _tables.TryRemove(resTable, out _);
+            InvalidateLogColumns(table);
+            InvalidateLogColumns(dataTable);
+            _tables.TryAdd(snapshot, 0);
+            _views.TryAdd(snapshot, 0);
+            _tables.TryAdd(dataSnapshot, 0);
+            _tables.TryAdd(resSnapshot, 0);
+            return snapshot;
+        }
+
+        var snapshotName = TimeTables.ArchiveName(prefix, day);
         if (prefix == TimeTables.TracesPrefix)
         {
             await ExecuteWriteAsync($"DROP INDEX IF EXISTS {table}_tid_idx", cancellationToken: token);
         }
 
-        await ExecuteWriteAsync($"ALTER TABLE {table} RENAME TO {snapshot}", cancellationToken: token);
+        await ExecuteWriteAsync($"ALTER TABLE {table} RENAME TO {snapshotName}", cancellationToken: token);
         _tables.TryRemove(table, out _);
         InvalidateLogColumns(table);
-        _tables.TryAdd(snapshot, 0);
-        return snapshot;
+        _tables.TryAdd(snapshotName, 0);
+        return snapshotName;
+    }
+
+    /// <summary>视图门面天的冻结快照三元组（同一 guid，命名与 ArchiveNames 规则一致）.</summary>
+    private static (string View, string Data, string Res) SnapshotNames(string prefix, DateTimeOffset day)
+    {
+        var guid = Guid.NewGuid().ToString("N");
+        var dayString = day.UtcDateTime.ToString(TimeTables.DayFormat, System.Globalization.CultureInfo.InvariantCulture);
+        var view = $"{prefix}archive_{guid}_{dayString}";
+        var (data, res) = TimeTables.ArchiveCompanions(prefix, view);
+        return (view, data, res);
+    }
+
+    /// <summary>在指定连接的事务内执行 DDL（冻结/结构变更原子化用；表名与 SQL 均为内部生成）.</summary>
+    private static async Task<int> ExecuteInTransactionAsync(DuckDBConnection connection, DbTransaction transaction, string sql, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        return await command.ExecuteNonQueryAsync(token);
     }
 
     /// <summary>
@@ -254,20 +311,23 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
     public DuckDbConnectionManager(SystemOptions options, ILogger<DuckDbConnectionManager> logger)
     {
         _options = options.DuckDb;
-        var maxQueries = Math.Clamp(_options.MaxConcurrentQueries, 1, 32);
-        _queryLock = new SemaphoreSlim(maxQueries, maxQueries);
+        // 初始查询准入门；InitializeAsync 以 TuningState 基线覆盖
+        _queryLock = new SemaphoreSlim(4, 4);
         _s3 = options.S3;
         _traceIndexEnabled = options.Ingest.TraceIndexEnabled;
         _logger = logger;
     }
 
+    /// <summary>WAL checkpoint 阈值（压测择优）：调大可减少高频提交时 checkpoint 抢占 commit.</summary>
+    private const string CheckpointThreshold = "1GB";
+
     /// <summary>
-    /// 初始化：打开主连接、应用运行参数、加载表清单.
+    /// 初始化：打开主连接、应用运行参数（来自 ITuningState 自动调控基线）、加载表清单.
     /// </summary>
     /// <param name="cancellationToken">取消.</param>
-    /// <param name="memoryLimit">启动时的持久化覆盖；空则使用文件默认.</param>
-    /// <param name="threads">启动时的持久化线程数；空则使用文件默认.</param>
-    /// <param name="maxConcurrentQueries">启动时的持久化并发查询数；空则使用文件默认.</param>
+    /// <param name="memoryLimit">内存限制（TuningState 基线）.</param>
+    /// <param name="threads">线程数（TuningState 基线）.</param>
+    /// <param name="maxConcurrentQueries">并发查询数（TuningState 基线）.</param>
     /// <returns>Task.</returns>
     public async Task InitializeAsync(CancellationToken cancellationToken = default, string? memoryLimit = null, int? threads = null, int? maxConcurrentQueries = null)
     {
@@ -281,18 +341,15 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
         _master = new DuckDBConnection($"Data Source={dbPath}");
         await _master.OpenAsync(cancellationToken);
 
-        await ApplyMemoryLimitAsync(memoryLimit ?? _options.MemoryLimit, cancellationToken);
-        var effectiveThreads = threads ?? _options.Threads;
+        await ApplyMemoryLimitAsync(memoryLimit ?? TuningDefaults.MemoryLimit, cancellationToken);
+        var effectiveThreads = threads ?? TuningDefaults.Threads;
         if (effectiveThreads > 0)
         {
             await ApplyThreadsAsync(effectiveThreads, cancellationToken);
         }
 
-        // WAL checkpoint 阈值：调大可减少高频提交时 checkpoint 抢占 commit（空 = 引擎默认 16MB）
-        if (!string.IsNullOrWhiteSpace(_options.CheckpointThreshold))
-        {
-            await ExecuteUnsafeAsync("SET checkpoint_threshold = $threshold", [new DuckDBParameter("threshold", _options.CheckpointThreshold.Trim())], cancellationToken);
-        }
+        // WAL checkpoint 阈值：调大可减少高频提交时 checkpoint 抢占 commit
+        await ExecuteUnsafeAsync("SET checkpoint_threshold = $threshold", [new DuckDBParameter("threshold", CheckpointThreshold)], cancellationToken);
 
         if (maxConcurrentQueries is { } queries)
         {
@@ -313,17 +370,23 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
         // Endpoint 为空 = 关闭冷层，完全跳过（零行为变化）
         await ApplyS3SecretAsync(_s3, cancellationToken);
 
-        // 缓存已有表名
+        // 缓存已有表名与视图名（logs/traces 天对象自视图门面改造后为视图；旧宽表仍为物理表）
         await foreach (var table in QueryEachAsync("SELECT table_name FROM duckdb_tables()", cancellationToken))
         {
             _tables.TryAdd(table, 0);
+        }
+
+        await foreach (var view in QueryEachAsync("SELECT view_name FROM duckdb_views() WHERE internal = false", cancellationToken))
+        {
+            _tables.TryAdd(view, 0);
+            _views.TryAdd(view, 0);
         }
 
         await using var config = _master.CreateCommand();
         config.CommandText = "SELECT current_setting(\'threads\')";
         var readThreads = Convert.ToInt32(await config.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
         _logger.LogInformation("DuckDB initialized at {Path} with {TableCount} tables (memory_limit={MemoryLimit}, effective_limit={EffectiveLimit}, threads={Threads}, max_queries={MaxQueries}, checkpoint_threshold={CheckpointThreshold})",
-            dbPath, _tables.Count, MemoryLimit, EffectiveMemoryLimit, readThreads, Math.Clamp(maxConcurrentQueries ?? _options.MaxConcurrentQueries, 1, 32), string.IsNullOrWhiteSpace(_options.CheckpointThreshold) ? "default" : _options.CheckpointThreshold);
+            dbPath, _tables.Count, MemoryLimit, EffectiveMemoryLimit, readThreads, Math.Clamp(maxConcurrentQueries ?? TuningDefaults.MaxConcurrentQueries, 1, 32), CheckpointThreshold);
     }
 
     /// <inheritdoc/>
@@ -399,6 +462,8 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
 
     /// <summary>
     /// 按天确保表存在（建表 + 建索引），并缓存.
+    /// logs/traces 为视图门面三件套（数据窄表 + resource 字典表 + 宽列视图）；
+    /// 已存在的旧版物理宽表保持原样（跳过），由写入端按列布局自适应.
     /// </summary>
     /// <param name="prefix">表前缀.</param>
     /// <param name="days">需要的天.</param>
@@ -429,6 +494,13 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
 
                 InvalidateLogColumns(table);
                 _tables.TryAdd(table, 0);
+                if (TimeTables.IsViewBacked(prefix))
+                {
+                    _views.TryAdd(table, 0);
+                    _tables.TryAdd(TimeTables.DataTableName(prefix, day), 0);
+                    _tables.TryAdd(TimeTables.ResTableName(prefix, day), 0);
+                }
+
                 _logger.LogDebug("Created DuckDB table {Table}", table);
             }
             finally
@@ -437,6 +509,9 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
             }
         }
     }
+
+    /// <summary>该天对象是否为视图门面（数据在伴生窄表 + resource 字典表）；false = 旧版物理宽表.</summary>
+    internal bool IsViewDay(string table) => _views.ContainsKey(table);
 
     /// <summary>
     /// 获取时间范围内已存在的按天表名.
@@ -590,17 +665,59 @@ public class DuckDbConnectionManager : IAsyncDisposable, IStoreInfo, IDuckDbRunt
     }
 
     /// <summary>
-    /// 删除按天表（保留策略）.
+    /// 删除按天对象（保留策略）：视图门面天连带 DROP 伴生窄表与字典表；冻结快照视图连带其伴生快照表.
     /// </summary>
     /// <param name="tableName">表名.</param>
     /// <param name="cancellationToken">取消.</param>
     /// <returns>Task.</returns>
     public async Task DropTableAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        await ExecuteWriteAsync($"DROP TABLE IF EXISTS {tableName}", cancellationToken: cancellationToken);
+        if (_views.TryRemove(tableName, out _))
+        {
+            await ExecuteWriteAsync($"DROP VIEW IF EXISTS {tableName}", cancellationToken: cancellationToken);
+            foreach (var companion in ViewCompanionTables(tableName))
+            {
+                await ExecuteWriteAsync($"DROP TABLE IF EXISTS {companion}", cancellationToken: cancellationToken);
+                _tables.TryRemove(companion, out _);
+                InvalidateLogColumns(companion);
+            }
+        }
+        else
+        {
+            await ExecuteWriteAsync($"DROP TABLE IF EXISTS {tableName}", cancellationToken: cancellationToken);
+        }
+
         _tables.TryRemove(tableName, out _);
         InvalidateLogColumns(tableName);
         _logger.LogInformation("Dropped expired DuckDB table {Table}", tableName);
+    }
+
+    /// <summary>
+    /// 推导视图对象的伴生物理表名（天对象或冻结快照；logs/traces 前缀互逆规则，见 TimeTables.ArchiveCompanions）.
+    /// </summary>
+    /// <param name="viewName">视图名.</param>
+    /// <returns>伴生表名列表.</returns>
+    private IReadOnlyList<string> ViewCompanionTables(string viewName)
+    {
+        foreach (var prefix in new[] { TimeTables.LogsPrefix, TimeTables.TracesPrefix })
+        {
+            if (viewName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (TimeTables.IsArchive(viewName))
+                {
+                    var (data, res) = TimeTables.ArchiveCompanions(prefix, viewName);
+                    return [data, res];
+                }
+
+                var day = TimeTables.ParseDay(viewName);
+                if (day != null)
+                {
+                    return [TimeTables.DataTableName(prefix, day.Value), TimeTables.ResTableName(prefix, day.Value)];
+                }
+            }
+        }
+
+        return [];
     }
 
     /// <inheritdoc/>

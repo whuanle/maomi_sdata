@@ -148,3 +148,12 @@ Feature: 服务状态与总览聚合
     Given 已加载成功的总览数据
     When 后续刷新部分或全部失败
     Then 提示失败来源与旧快照，无法获取的指标为未知且存活探针失败不继续标为存活
+
+## 自动调参可见性（2026-11-23）
+
+  @MO-TUNING @manual
+  Scenario: 状态接口暴露调参快照
+    Given AdaptiveTuningService 周期调整缓冲容量/预算/批量
+    When 客户端请求 /api/monitor/status
+    Then 响应含 tuning 段（有效核数、环境内存上限、DuckDB 内存/线程/并发、缓冲当前值/硬顶/基线、
+      批量/间隔、调整次数与最近原因），总览页「自动调参」面板只读展示；性能参数无任何写回入口

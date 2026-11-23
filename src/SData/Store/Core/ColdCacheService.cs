@@ -21,6 +21,7 @@ public sealed class ColdCacheService : BackgroundService
     private const string TempSuffix = ".tmp";
 
     private readonly ISystemSettingsProvider _settings;
+    private readonly ITuningState _tuning;
     private readonly IObjectStore _objectStore;
     private readonly ILogger<ColdCacheService> _logger;
     private readonly Channel<string> _queue = Channel.CreateBounded<string>(new BoundedChannelOptions(QueueCapacity)
@@ -38,12 +39,14 @@ public sealed class ColdCacheService : BackgroundService
     /// <summary>
     /// Initializes a new instance of the <see cref="ColdCacheService"/> class.
     /// </summary>
-    /// <param name="settings">系统设置（运行参数 ColdCache 段，保存即生效）.</param>
+    /// <param name="settings">系统设置（运行参数 ColdCache 开关，保存即生效）.</param>
+    /// <param name="tuning">自动调参状态（缓存容量上限）.</param>
     /// <param name="objectStore">对象存储（下载通道）.</param>
     /// <param name="logger">日志.</param>
-    public ColdCacheService(ISystemSettingsProvider settings, IObjectStore objectStore, ILogger<ColdCacheService> logger)
+    public ColdCacheService(ISystemSettingsProvider settings, ITuningState tuning, IObjectStore objectStore, ILogger<ColdCacheService> logger)
     {
         _settings = settings;
+        _tuning = tuning;
         _objectStore = objectStore;
         _logger = logger;
     }
@@ -138,7 +141,7 @@ public sealed class ColdCacheService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var cache = _settings.GetRuntime().ColdCache;
-        _logger.LogInformation("Cold cache service started (enabled={Enabled}, maxBytes={MaxBytes})", cache.Enabled, cache.MaxBytes);
+        _logger.LogInformation("Cold cache service started (enabled={Enabled}, maxBytes={MaxBytes})", cache.Enabled, _tuning.ColdCacheMaxBytes);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -205,7 +208,7 @@ public sealed class ColdCacheService : BackgroundService
 
     private void Sweep()
     {
-        var maxBytes = _settings.GetRuntime().ColdCache.MaxBytes;
+        var maxBytes = _tuning.ColdCacheMaxBytes;
         lock (_lock)
         {
             if (_totalBytes <= maxBytes)

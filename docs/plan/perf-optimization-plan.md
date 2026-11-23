@@ -1,5 +1,7 @@
 # SData 分层性能优化策略（2026-11-22）
 
+> **追加实施（2026-11-23）**：logs 写入瓶颈（写入器每行 resource JSON 编码）已突破——logs/traces 天表改为「视图门面 + resource 字典去重」schema 级改造（`log_data_/log_res_` 窄表 + `ResourceInterner` 引用相等快路径，查询层零改动，见 store/sdd.md 关键决策 11）；性能参数（缓冲/批量/DuckDB 内存线程并发）收归 `ITuningState` 自动调控，缓冲由 `AdaptiveTuningService` 按负载与 OOM 硬顶自适应扩缩。
+
 > **实施状态（2026-11-22）**：Phase 1/2/4 全部落地；Phase 3 落地 watchdog 惰性化、DSL 列式响应、Rollup 固定迟到窗口；**查询连接池试验后回退**（DuckDB 连接保持打开会残留事务上下文阻塞 CHECKPOINT/归档，见 `DuckDbConnectionManager.CloneConnection` 注释）。回归数据见 `tool/StressTest/REPORT.md` 第七节。全部 7 个测试项目 662 用例通过。
 
 > 依据：`tool/StressTest/REPORT.md` 压测报告（写入天花板 ~3.3 万条/s、查询全局串行、429 无效反序列化、GC 分配峰值 27.4GB/s）。

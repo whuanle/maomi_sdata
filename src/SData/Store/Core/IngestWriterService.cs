@@ -6,7 +6,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SData.Infra.Configuration;
 using SData.Infra.Services;
-using SData.Settings;
 using SData.Store.Models;
 
 namespace SData.Store;
@@ -18,7 +17,8 @@ public class IngestWriterService : BackgroundService
 {
     private readonly IngestBuffer _buffer;
     private readonly DuckDbConnectionManager _connectionManager;
-    private readonly ISystemSettingsProvider _settings;
+    private readonly ITuningState _tuning;
+    private readonly ResourceInterner _interner;
     private readonly IIdProvider _idProvider;
     private readonly ILogger<IngestWriterService> _logger;
 
@@ -27,14 +27,16 @@ public class IngestWriterService : BackgroundService
     /// </summary>
     /// <param name="buffer">缓冲.</param>
     /// <param name="connectionManager">连接管理器.</param>
-    /// <param name="settings">系统设置（批量参数每轮读取，保存即生效）.</param>
+    /// <param name="tuning">自动调参状态（批量参数每轮读取，随扩缩调整）.</param>
+    /// <param name="interner">resource 字典编码器（logs/traces 写入去重）.</param>
     /// <param name="idProvider">id 生成器（logs 行级雪花 id 落库统一赋值，各写入通道零改动）.</param>
     /// <param name="logger">日志.</param>
-    public IngestWriterService(IngestBuffer buffer, DuckDbConnectionManager connectionManager, ISystemSettingsProvider settings, IIdProvider idProvider, ILogger<IngestWriterService> logger)
+    public IngestWriterService(IngestBuffer buffer, DuckDbConnectionManager connectionManager, ITuningState tuning, ResourceInterner interner, IIdProvider idProvider, ILogger<IngestWriterService> logger)
     {
         _buffer = buffer;
         _connectionManager = connectionManager;
-        _settings = settings;
+        _tuning = tuning;
+        _interner = interner;
         _idProvider = idProvider;
         _logger = logger;
     }
@@ -42,8 +44,7 @@ public class IngestWriterService : BackgroundService
     /// <inheritdoc/>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var initial = _settings.GetRuntime().Ingest;
-        _logger.LogInformation("Ingest writer started (batch={BatchSize}, flush={FlushIntervalMs}ms)", initial.BatchSize, initial.FlushIntervalMs);
+        _logger.LogInformation("Ingest writer started (batch={BatchSize}, flush={FlushIntervalMs}ms)", _tuning.BatchSize, _tuning.FlushIntervalMs);
 
         var batch = new List<IngestItem>();
         while (!stoppingToken.IsCancellationRequested)
@@ -55,19 +56,28 @@ public class IngestWriterService : BackgroundService
                     break;
                 }
 
-                // 批量参数每轮读取，设置页保存后下一批即生效
-                var ingest = _settings.GetRuntime().Ingest;
+                // 批量参数每轮读取，AdaptiveTuningService 调整后下一批即生效
+                var batchSize = _tuning.BatchSize;
                 // 高吞吐时立即批量落库；低流量时短暂聚合更多条目，提升批量大小
-                if (_buffer.Reader.Count < ingest.BatchSize / 2 && !_buffer.HasPersistWaiters)
+                if (_buffer.Reader.Count < batchSize / 2 && !_buffer.HasPersistWaiters)
                 {
-                    await Task.Delay(ingest.FlushIntervalMs, stoppingToken);
+                    await Task.Delay(_tuning.FlushIntervalMs, stoppingToken);
                 }
 
                 batch.Clear();
-                while (batch.Count < ingest.BatchSize && _buffer.Reader.TryRead(out var item))
+                var counted = 0;
+                while (batch.Count < batchSize && _buffer.Reader.TryRead(out var item))
                 {
+                    if (item.Counted)
+                    {
+                        counted++;
+                    }
+
                     batch.Add(item);
                 }
+
+                // 已读出条目即刻释放条数闸门（内存占用仍由字节预算在 MarkProcessed 时释放）
+                _buffer.ReleaseSlots(counted);
 
                 if (batch.Count > 0)
                 {
@@ -196,23 +206,63 @@ public class IngestWriterService : BackgroundService
         }
     }
 
-    /// <summary>logs 表规范列序（与 TimeTables.CreateSql 的 logs DDL 一致）；一致时走免 switch 的固定列序快路径.</summary>
-    private static readonly string[] CanonicalLogColumns =
-        ["id", "ts", "service", "severity", "body", "trace_id", "span_id", "attributes", "resource", "source"];
+    /// <summary>logs 数据表规范列序：旧版物理宽表（resource 原文）与视图门面窄表（resource_id 字典编码）；一致时走免 switch 的固定列序快路径.</summary>
+    private static readonly string[] WideLogColumns = DuckDbConnectionManager.WideLogColumns;
+
+    private static readonly string[] NarrowLogColumns = DuckDbConnectionManager.NarrowLogColumns;
 
     private async Task AppendAsync(DuckDBConnection connection, IngestKind kind, string table, List<object> records, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var logColumns = kind == IngestKind.Log
-            ? await _connectionManager.GetLogColumnsAsync(connection, table, cancellationToken)
-            : Array.Empty<string>();
-        var fastLogPath = IsCanonicalLogColumns(logColumns);
+        var day = TimeTables.ParseDay(table)!.Value;
+        var isViewDay = _connectionManager.IsViewDay(table);
 
-        using var appender = connection.CreateAppender(table);
+        // 视图门面天：数据写伴生窄表；resource 先 intern 去重，字典新条目先落数字典表（同一事务内先 res 后 data，引用完整）
+        string? dataTable = table;
+        string? resTable = null;
+        long?[]? resourceIds = null;
+        List<(long Id, string Json)>? resEntries = null;
+        switch (kind)
+        {
+            case IngestKind.Log when isViewDay:
+                dataTable = TimeTables.DataTableName(TimeTables.LogsPrefix, day);
+                resTable = TimeTables.ResTableName(TimeTables.LogsPrefix, day);
+                (resourceIds, resEntries) = InternResources<LogRecord>(day, records, static record => record.ResourceJson);
+                break;
+            case IngestKind.Trace when isViewDay:
+                dataTable = TimeTables.DataTableName(TimeTables.TracesPrefix, day);
+                resTable = TimeTables.ResTableName(TimeTables.TracesPrefix, day);
+                (resourceIds, resEntries) = InternResources<SpanRecord>(day, records, static record => record.ResourceJson);
+                break;
+        }
+
+        var logColumns = kind == IngestKind.Log
+            ? await _connectionManager.GetLogColumnsAsync(connection, dataTable!, cancellationToken)
+            : Array.Empty<string>();
+        var logLayout = IsCanonicalLogColumns(logColumns);
+
+        if (resEntries is { Count: > 0 })
+        {
+            using (var resAppender = connection.CreateAppender(resTable!))
+            {
+                foreach (var (id, json) in resEntries)
+                {
+                    var resRow = resAppender.CreateRow();
+                    resRow.AppendValue(id);
+                    resRow.AppendValue(json);
+                    resRow.EndRow();
+                }
+
+                resAppender.Close();
+            }
+        }
+
+        using var appender = connection.CreateAppender(dataTable!);
         var rowLoopStarted = Stopwatch.GetTimestamp();
 
-        foreach (var recordObject in records)
+        for (var index = 0; index < records.Count; index++)
         {
+            var recordObject = records[index];
             var row = appender.CreateRow();
             switch (kind)
             {
@@ -222,7 +272,17 @@ public class IngestWriterService : BackgroundService
                         log.Id = _idProvider.GetLongId();
                     }
 
-                    if (fastLogPath)
+                    if (logLayout == LogLayout.Narrow)
+                    {
+                        row.AppendValue(log.Id).AppendValue(Normalize(log.Timestamp)).AppendValue(log.Service)
+                            .AppendValue(log.Severity).AppendValue(log.Body ?? string.Empty).AppendValue(log.TraceId)
+                            .AppendValue(log.SpanId).AppendValue(log.AttributesJson);
+                        AppendResourceId(row, resourceIds![index]);
+                        row.AppendValue(log.Source);
+                        break;
+                    }
+
+                    if (logLayout == LogLayout.Wide)
                     {
                         row.AppendValue(log.Id).AppendValue(Normalize(log.Timestamp)).AppendValue(log.Service)
                             .AppendValue(log.Severity).AppendValue(log.Body ?? string.Empty).AppendValue(log.TraceId)
@@ -244,6 +304,7 @@ public class IngestWriterService : BackgroundService
                             case "span_id": row.AppendValue(log.SpanId); break;
                             case "attributes": row.AppendValue(log.AttributesJson); break;
                             case "resource": row.AppendValue(log.ResourceJson); break;
+                            case "resource_id": AppendResourceId(row, resourceIds![index]); break;
                             case "source": row.AppendValue(log.Source); break;
                             default: throw new InvalidOperationException("不支持的日志列：" + column);
                         }
@@ -257,6 +318,16 @@ public class IngestWriterService : BackgroundService
                         .AppendValue(sample.ConfirmationFailures).AppendValue(sample.SamplingGaps).AppendValue(sample.DiagnosticsJson);
                     break;
                 case IngestKind.Trace when recordObject is SpanRecord span:
+                    if (isViewDay)
+                    {
+                        row.AppendValue(span.TraceId).AppendValue(span.SpanId).AppendValue(span.ParentSpanId)
+                            .AppendValue(Normalize(span.Timestamp)).AppendValue(span.DurationUs).AppendValue(span.Service)
+                            .AppendValue(span.Name).AppendValue(span.Kind).AppendValue(span.Status)
+                            .AppendValue(span.AttributesJson).AppendValue(span.EventsJson);
+                        AppendResourceId(row, resourceIds![index]);
+                        break;
+                    }
+
                     row.AppendValue(span.TraceId).AppendValue(span.SpanId).AppendValue(span.ParentSpanId)
                         .AppendValue(Normalize(span.Timestamp)).AppendValue(span.DurationUs).AppendValue(span.Service)
                         .AppendValue(span.Name).AppendValue(span.Kind).AppendValue(span.Status)
@@ -295,23 +366,80 @@ public class IngestWriterService : BackgroundService
         _connectionManager.RecordIngestAppendClose(Stopwatch.GetElapsedTime(closeStarted).TotalSeconds);
     }
 
-    /// <summary>列集与规范序完全一致时返回 true（缓存由 GetLogColumnsAsync 承担，这里仅做一次线性比对/批）.</summary>
-    private static bool IsCanonicalLogColumns(IReadOnlyList<string> logColumns)
+    /// <summary>logs 数据表列布局（宽 = 旧版物理表存 resource 原文；窄 = 视图门面数据表存 resource_id）.</summary>
+    private enum LogLayout
     {
-        if (logColumns.Count != CanonicalLogColumns.Length)
+        Other,
+        Wide,
+        Narrow,
+    }
+
+    /// <summary>列集与规范序完全一致时返回布局（缓存由 GetLogColumnsAsync 承担，这里仅做线性比对/批）.</summary>
+    private static LogLayout IsCanonicalLogColumns(IReadOnlyList<string> logColumns)
+    {
+        if (Matches(logColumns, NarrowLogColumns))
+        {
+            return LogLayout.Narrow;
+        }
+
+        return Matches(logColumns, WideLogColumns) ? LogLayout.Wide : LogLayout.Other;
+    }
+
+    private static bool Matches(IReadOnlyList<string> columns, string[] expected)
+    {
+        if (columns.Count != expected.Length)
         {
             return false;
         }
 
-        for (var i = 0; i < logColumns.Count; i++)
+        for (var i = 0; i < columns.Count; i++)
         {
-            if (!string.Equals(logColumns[i], CanonicalLogColumns[i], StringComparison.Ordinal))
+            if (!string.Equals(columns[i], expected[i], StringComparison.Ordinal))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 批量 intern resource 原文（视图门面天）；返回每条记录的 resource_id 与需落字典表的新条目.
+    /// </summary>
+    /// <typeparam name="T">记录类型（LogRecord/SpanRecord）.</typeparam>
+    /// <param name="day">数据天.</param>
+    /// <param name="records">记录列表.</param>
+    /// <param name="resourceSelector">resource 原文选择器.</param>
+    /// <returns>(每条 resource_id, 新字典条目).</returns>
+    private (long?[] Ids, List<(long Id, string Json)> Entries) InternResources<T>(DateTimeOffset day, List<object> records, Func<T, string?> resourceSelector)
+        where T : class
+    {
+        var ids = new long?[records.Count];
+        var entries = new List<(long Id, string Json)>();
+        for (var i = 0; i < records.Count; i++)
+        {
+            var result = _interner.Intern(day, resourceSelector((T)records[i]));
+            ids[i] = result.Id;
+            if (result.IsNew)
+            {
+                entries.Add((result.Id!.Value, result.Json!));
+            }
+        }
+
+        return (ids, entries);
+    }
+
+    /// <summary>resource_id 可空 BIGINT 追加（null 对应旧宽表的 NULL resource）.</summary>
+    private static void AppendResourceId(DuckDB.NET.Data.IDuckDBAppenderRow row, long? id)
+    {
+        if (id is { } value)
+        {
+            row.AppendValue(value);
+        }
+        else
+        {
+            row.AppendNullValue();
+        }
     }
 
     private static string Prefix(IngestKind kind)

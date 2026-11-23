@@ -46,6 +46,9 @@ public class StatusResponse
 
     /// <summary>DuckDB 内存上限.</summary>
     public string DuckDbMemoryLimit { get; set; } = string.Empty;
+
+    /// <summary>自动调参当前生效值与最近调整（缓冲扩缩、DuckDB 基线等）.</summary>
+    public SData.Store.TuningSnapshot? Tuning { get; set; }
 }
 
 /// <summary>

@@ -20,8 +20,11 @@ public interface IIngestBuffer
     /// <summary>缓冲当前条数（近似值，供背压快速拒绝使用）.</summary>
     int ApproximateBufferedCount => 0;
 
-    /// <summary>缓冲条数容量（超过即背压拒绝）.</summary>
+    /// <summary>缓冲条数容量（超过即背压拒绝；动态值，随自适应调参变化）.</summary>
     int Capacity => 0;
+
+    /// <summary>运行时调整缓冲条数容量与字节预算（AdaptiveTuningService 扩缩调用；缩容只影响新准入）.</summary>
+    void Resize(int capacityItems, long byteBudgetBytes) { }
 
     /// <summary>批量写入日志；失败条数仍按单条缓冲满载计数.</summary>
     (long Accepted, long Dropped, IReadOnlyList<LogRecord> Rejected) TryEnqueueLogs(IReadOnlyList<LogRecord> records)

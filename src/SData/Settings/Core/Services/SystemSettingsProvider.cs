@@ -58,39 +58,18 @@ public class SystemSettingsProvider : ISystemSettingsProvider
     public S3Options GetS3() => Get(SettingKeys.S3, _systemOptions.S3);
 
     /// <inheritdoc/>
-    public DuckDbSettings GetDuckDb()
-    {
-        var fallback = new DuckDbSettings { MemoryLimit = _systemOptions.DuckDb.MemoryLimit };
-        var settings = Get(SettingKeys.DuckDb, fallback);
-        if (DuckDbMemoryLimit.TryNormalize(settings.MemoryLimit, out var normalized))
-        {
-            return new DuckDbSettings { MemoryLimit = normalized };
-        }
-
-        _logger.LogWarning("设置 {Key} 的内存限制无效，回退文件配置", SettingKeys.DuckDb);
-        return fallback;
-    }
-
-    /// <inheritdoc/>
     public RuntimeSettings GetRuntime() => Get(SettingKeys.Runtime, new RuntimeSettings
     {
         Alerts = _systemOptions.Alerts,
         Agents = _systemOptions.Agents,
         DuckDb = new DuckDbTuningOptions
         {
-            Threads = _systemOptions.DuckDb.Threads,
-            MaxConcurrentQueries = _systemOptions.DuckDb.MaxConcurrentQueries,
             QueryTimeoutSeconds = _systemOptions.DuckDb.QueryTimeoutSeconds,
             MaxQueryDays = _systemOptions.DuckDb.MaxQueryDays,
             ColdMaxQueryDays = _systemOptions.DuckDb.ColdMaxQueryDays,
         },
         ColdCache = _systemOptions.ColdCache,
         Auth = new AuthTuningOptions { TokenExpireMinutes = _systemOptions.Auth.TokenExpireMinutes },
-        Ingest = new IngestTuningOptions
-        {
-            BatchSize = _systemOptions.Ingest.BatchSize,
-            FlushIntervalMs = _systemOptions.Ingest.FlushIntervalMs,
-        },
     });
 
     /// <inheritdoc/>

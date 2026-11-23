@@ -15,6 +15,7 @@ public class MonitorCoreModule : IModule
     public void ConfigureServices(ServiceContext context)
     {
         context.Services.AddSingleton<ResourceSampler>();
+        context.Services.AddSingleton<SData.Monitor.IResourceSnapshotProvider>(sp => sp.GetRequiredService<ResourceSampler>());
         context.Services.AddHostedService(sp => sp.GetRequiredService<ResourceSampler>());
     }
 }

@@ -4,16 +4,17 @@ namespace SData.Settings;
 
 /// <summary>
 /// 运行参数（设置页「运行参数」；保存后各消费端下一次读取即生效，未保存时回退文件/环境变量默认）.
+/// 性能参数（缓冲、批量、DuckDB 线程/并发/内存等）不在此列，由系统按环境自动调控（见 Store 的 ITuningState）.
 /// </summary>
 public class RuntimeSettings
 {
     /// <summary>搜索告警执行预算.</summary>
     public AlertOptions Alerts { get; set; } = new();
 
-    /// <summary>MCP 访问预算.</summary>
+    /// <summary>MCP 访问预算（速率与超时；并发上限由系统自动调控）.</summary>
     public AgentOptions Agents { get; set; } = new();
 
-    /// <summary>DuckDB 查询与并发上限（内存限制见 DuckDB 页签）.</summary>
+    /// <summary>DuckDB 查询策略（超时与跨度上限；线程/并发/内存由系统自动调控）.</summary>
     public DuckDbTuningOptions DuckDb { get; set; } = new();
 
     /// <summary>冷数据本地缓存.</summary>
@@ -21,22 +22,13 @@ public class RuntimeSettings
 
     /// <summary>登录 token 有效期（仅影响之后签发的 token）.</summary>
     public AuthTuningOptions Auth { get; set; } = new();
-
-    /// <summary>摄取批量落库参数.</summary>
-    public IngestTuningOptions Ingest { get; set; } = new();
 }
 
 /// <summary>
-/// DuckDB 可调查询与并发参数（不含路径、临时目录与内存限制）.
+/// DuckDB 查询策略参数（超时/跨度；线程、并发、内存限制由系统自动调控）.
 /// </summary>
 public class DuckDbTuningOptions
 {
-    /// <summary>线程数（SET threads，实例级全局设置，立即生效）.</summary>
-    public int Threads { get; set; } = 2;
-
-    /// <summary>同时执行的查询数（立即生效，降低小内存部署的查询竞争）.</summary>
-    public int MaxConcurrentQueries { get; set; } = 1;
-
     /// <summary>分析查询预算（秒）.</summary>
     public int QueryTimeoutSeconds { get; set; } = 30;
 
@@ -54,16 +46,4 @@ public class AuthTuningOptions
 {
     /// <summary>token 有效期（分钟）.</summary>
     public int TokenExpireMinutes { get; set; } = 720;
-}
-
-/// <summary>
-/// 摄取批量落库配置（写入器每轮读取，立即生效；缓冲容量为启动参数，见 appsettings.json）.
-/// </summary>
-public class IngestTuningOptions
-{
-    /// <summary>批量落库条数.</summary>
-    public int BatchSize { get; set; } = 5_000;
-
-    /// <summary>落库间隔（毫秒）.</summary>
-    public int FlushIntervalMs { get; set; } = 200;
 }

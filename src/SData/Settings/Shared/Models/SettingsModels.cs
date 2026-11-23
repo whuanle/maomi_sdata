@@ -10,9 +10,6 @@ public class SettingsResponse
     /// <summary>S3 冷存储（SecretKey 掩码）.</summary>
     public S3SettingsModel S3 { get; set; } = new();
 
-    /// <summary>DuckDB 内存配置与当前生效值.</summary>
-    public DuckDbSettingsResponse DuckDb { get; set; } = new();
-
     /// <summary>三段保留（5 域热/冷天数）.</summary>
     public RetentionPlanOptions Retention { get; set; } = new();
 
@@ -25,7 +22,7 @@ public class SettingsResponse
     /// <summary>运行参数（合并视图；保存见 PUT /settings/runtime）.</summary>
     public RuntimeSettings Runtime { get; set; } = new();
 
-    /// <summary>摄取启动参数（启动时绑定，只读展示；批量参数见 Runtime.Ingest）.</summary>
+    /// <summary>摄取启动参数（启动时绑定，只读展示）.</summary>
     public IngestSettingsInfo Ingest { get; set; } = new();
 
     /// <summary>启动参数与 configs/system.json 覆盖状态（只读；「启动配置」页签）.</summary>
@@ -55,44 +52,20 @@ public class StartupSettingsInfo
     /// <summary>DuckDB 分析库路径.</summary>
     public string DuckDbPath { get; set; } = string.Empty;
 
-    /// <summary>DuckDB 内存上限.</summary>
-    public string DuckDbMemoryLimit { get; set; } = string.Empty;
-
-    /// <summary>DuckDB WAL checkpoint 阈值.</summary>
-    public string DuckDbCheckpointThreshold { get; set; } = string.Empty;
-
-    /// <summary>DuckDB 查询结果缓存 TTL（秒，0 = 关闭）.</summary>
-    public int DuckDbQueryCacheTtlSeconds { get; set; }
-
-    /// <summary>DuckDB 查询结果缓存最大条目数.</summary>
-    public int DuckDbQueryCacheMaxEntries { get; set; }
-
     /// <summary>DuckDB 临时目录（空 = 系统默认）.</summary>
     public string? DuckDbTempDirectory { get; set; }
 
     /// <summary>接入端点是否要求鉴权.</summary>
     public bool IngestRequireAuth { get; set; }
-
-    /// <summary>内存缓冲容量（条；启动时固定，修改需重启）.</summary>
-    public int IngestBufferCapacity { get; set; }
-
-    /// <summary>内存缓冲估算字节预算（启动时固定，修改需重启）.</summary>
-    public long IngestBufferByteBudgetBytes { get; set; }
 }
 
 /// <summary>
-/// 摄取启动参数只读快照（白名单字段，不含 InitialApiKey 等敏感项）.
+/// 摄取启动参数只读快照（白名单字段，不含 InitialApiKey 等敏感项；缓冲容量/预算由系统自动调控，见监控页 Tuning）.
 /// </summary>
 public class IngestSettingsInfo
 {
     /// <summary>接入端点是否要求鉴权.</summary>
     public bool RequireAuth { get; set; }
-
-    /// <summary>内存缓冲容量（条；有界 Channel 构造期固定，修改需重启）.</summary>
-    public int BufferCapacity { get; set; }
-
-    /// <summary>内存缓冲估算字节预算（启动配置固定，修改需重启）.</summary>
-    public long BufferByteBudgetBytes { get; set; }
 }
 
 /// <summary>

@@ -15,22 +15,25 @@ public class CachedAnalyticsExecutor : IAnalyticsExecutor
 {
     private const int CacheMaxRows = 1000;
 
+    /// <summary>结果缓存 TTL（秒；压测择优，仪表盘轮询在 TTL 内命中）.</summary>
+    private const int CacheTtlSeconds = 5;
+
+    /// <summary>结果缓存最大条目数.</summary>
+    private const int CacheMaxEntries = 256;
+
     private readonly IAnalyticsExecutor _inner;
-    private readonly SystemOptions _options;
     private readonly MemoryCache _cache;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CachedAnalyticsExecutor"/> class.
     /// </summary>
     /// <param name="inner">内层执行器.</param>
-    /// <param name="options">系统配置.</param>
-    public CachedAnalyticsExecutor(IAnalyticsExecutor inner, SystemOptions options)
+    public CachedAnalyticsExecutor(IAnalyticsExecutor inner)
     {
         _inner = inner;
-        _options = options;
         _cache = new MemoryCache(new MemoryCacheOptions
         {
-            SizeLimit = Math.Max(16, options.DuckDb.AnalyticsQueryCacheMaxEntries),
+            SizeLimit = CacheMaxEntries,
         });
     }
 
@@ -45,7 +48,7 @@ public class CachedAnalyticsExecutor : IAnalyticsExecutor
     /// <inheritdoc/>
     public async Task<AnalyticsQueryResult> ExecuteSearchAsync(string sql, DateTimeOffset from, DateTimeOffset to, int rowLimit = 500, IReadOnlyDictionary<string, object?>? parameters = null, CancellationToken cancellationToken = default)
     {
-        var ttlSeconds = _options.DuckDb.AnalyticsQueryCacheTtlSeconds;
+        var ttlSeconds = CacheTtlSeconds;
         if (ttlSeconds <= 0)
         {
             return await _inner.ExecuteSearchAsync(sql, from, to, rowLimit, parameters, cancellationToken);
